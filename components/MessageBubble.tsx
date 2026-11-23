@@ -184,7 +184,10 @@ export default function MessageBubble({
             <div className="tool-results">
               {message.tools.map((tool, index) => (
                 <details key={`${tool.name}-${index}`}>
-                  <summary><Wrench size={13} /> {tool.name}</summary>
+                  <summary>
+                    <Wrench size={13} /> <strong>{tool.name}</strong>
+                    <span>{tool.output.replace(/[*#`\n]+/g, " ").slice(0, 70)}</span>
+                  </summary>
                   <div className="tool-output"><Markdown content={tool.output} /></div>
                 </details>
               ))}

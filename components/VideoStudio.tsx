@@ -58,6 +58,7 @@ function parseScenes(script: string): string[] {
 }
 
 function wrapText(ctx: CanvasRenderingContext2D, text: string, maxWidth: number, maxLines = 3): string[] {
+  if (typeof text !== "string" || !text.trim()) return [""];
   const words = text.split(/\s+/).filter(Boolean);
   const lines: string[] = [];
   let current = "";
@@ -113,8 +114,9 @@ function drawFrame(options: DrawOptions) {
   if (!ctx) return;
   const w = canvas.width;
   const h = canvas.height;
-  const safeScenes = scenes.length ? scenes : ["Aapki kahani yahaan dikhegi"];
-  const index = Math.min(safeScenes.length - 1, Math.floor(elapsed / sceneDuration));
+  const safeScenes = scenes?.length ? scenes : ["Aapki kahani yahaan dikhegi"];
+  const rawIndex = Math.floor(elapsed / (sceneDuration > 0 ? sceneDuration : 3));
+  const index = Math.max(0, Math.min(safeScenes.length - 1, Number.isFinite(rawIndex) ? rawIndex : 0));
   const local = Math.max(0, elapsed - index * sceneDuration);
   const image = images.length ? images[index % images.length] : null;
 
@@ -184,7 +186,8 @@ function drawFrame(options: DrawOptions) {
     ctx.fillText(theme.trim().slice(0, 60), w / 2, h - 34 * unit);
   }
 
-  const progress = Math.min(1, elapsed / (sceneDuration * safeScenes.length));
+  const totalDuration = (sceneDuration > 0 ? sceneDuration : 3) * safeScenes.length;
+  const progress = Math.max(0, Math.min(1, elapsed / totalDuration));
   ctx.fillStyle = "rgba(255,255,255,0.18)";
   ctx.fillRect(0, h - 6 * unit, w, 6 * unit);
   ctx.fillStyle = "#7c8cff";

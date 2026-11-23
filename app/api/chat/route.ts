@@ -123,22 +123,46 @@ async function anthropicStream(
   }
 }
 
+function waitWithAbort(ms: number, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal.aborted) return reject(new Error("Aborted"));
+    const timer = setTimeout(() => {
+      signal.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(new Error("Aborted"));
+    };
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
+}
+
 async function freeStream(
   messages: ApiMessage[],
   signal: AbortSignal,
   options: RequestOptions
 ) {
-  const upstream = await fetch(FREE_CHAT_URL, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", "User-Agent": "Chat-Master/1.0" },
-    body: JSON.stringify({
-      messages: [{ role: "system", content: options.system }, ...messages],
-      stream: true,
-      max_tokens: 2048,
-      temperature: options.temperature,
-    }),
-    signal,
-  });
+  const request = () =>
+    fetch(FREE_CHAT_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "User-Agent": "Chat-Master/1.0" },
+      body: JSON.stringify({
+        messages: [{ role: "system", content: options.system }, ...messages],
+        stream: true,
+        max_tokens: 2048,
+        temperature: options.temperature,
+      }),
+      signal,
+    });
+
+  let upstream = await request();
+  if ((upstream.status === 402 || upstream.status === 429) && !signal.aborted) {
+    const retrySeconds = Number(upstream.headers.get("retry-after")) || 45;
+    await upstream.body?.cancel().catch(() => undefined);
+    await waitWithAbort(Math.min(retrySeconds * 1000, 20000), signal);
+    upstream = await request();
+  }
 
   if (!upstream.ok || !upstream.body) {
     const detail = (await upstream.text().catch(() => "")).slice(0, 220);
