@@ -3,8 +3,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertCircle,
+  ArrowDown,
   ArrowUp,
   BookOpen,
+  Boxes,
   CloudSun,
   Code2,
   FileText,
@@ -26,7 +28,8 @@ import {
   Wrench,
 } from "lucide-react";
 import MessageBubble from "@/components/MessageBubble";
-import SettingsModal from "@/components/SettingsModal";
+import SettingsModal, { type Tab } from "@/components/SettingsModal";
+import Toolbox, { type ToolId } from "@/components/Toolbox";
 import VideoStudio from "@/components/VideoStudio";
 import Sidebar from "@/components/Sidebar";
 import {
@@ -40,8 +43,12 @@ import {
   looksLikeVideoRequest,
   makeMessage,
   newId,
+  readDraft,
   revokeMessageMedia,
+  revokeMessageMediaItem,
+  sanitizeImportedChats,
   saveState,
+  writeDraft,
   titleFromMessage,
   toApiMessages,
   type Attachment,
@@ -73,6 +80,7 @@ const SUGGESTIONS = [
   { text: "Mujhe ek short story sunao", icon: BookOpen },
   { text: "Ek cute cat ki image banao", icon: ImageIcon },
   { text: "/calc (12*8)+sqrt(81)", icon: Wrench },
+  { text: "16 tools ka toolbox kholo", icon: Boxes },
   { text: "3 scene ki reel banao", icon: Film },
   { text: "Newton ke laws samjhao", icon: Sparkles },
 ] as const;
@@ -83,6 +91,7 @@ const COMMANDS = [
     label: item.title,
     hint: item.hint,
   })),
+  { command: "/toolbox", label: "Toolbox", hint: "16 instant tools — JSON, hash, regex, color aur zyada" },
   { command: "/reel", label: "Reel Studio", hint: "Script + photos se reel/video banayein" },
   { command: "/image", label: "Image banana", hint: "AI se image generate karein" },
   { command: "/video", label: "Video banana", hint: "Image se animated clip (khali chhodkar studio kholein)" },
@@ -118,14 +127,6 @@ type SpeechWindow = Window & {
 
 const THEME_KEY = "chat-master:theme";
 
-function revokeMessageFiles(message: Message) {
-  if (typeof window === "undefined") return;
-  if (message.media?.url.startsWith("blob:")) URL.revokeObjectURL(message.media.url);
-  message.attachments?.forEach((file) => {
-    if (file.url?.startsWith("blob:")) URL.revokeObjectURL(file.url);
-  });
-}
-
 function timezoneHint(): string {
   try {
     const zone = Intl.DateTimeFormat().resolvedOptions().timeZone || "";
@@ -133,6 +134,20 @@ function timezoneHint(): string {
   } catch {
     return "";
   }
+}
+
+function followUpPrompts(content: string): string[] {
+  const text = content.toLowerCase();
+  if (/```|function |class |import |const |def /.test(text)) {
+    return ["Code samjhao", "Comments add karo", "Python me badlo"];
+  }
+  if (/[?？]\s*$/.test(content.trim())) {
+    return ["Haan, detail se batao", "Example do", "Simple shabdon me"];
+  }
+  if (/[\u0900-\u097F]/.test(content)) {
+    return ["Aur example do", "Chhota sa summary do", "English me bhi batao"];
+  }
+  return ["Explain simpler", "Give an example", "Summarize in 3 points"];
 }
 
 export default function ChatMaster() {
@@ -155,12 +170,17 @@ export default function ChatMaster() {
   const [toast, setToast] = useState<Toast | null>(null);
   const [preferences, setPreferences] = useState<Preferences>(DEFAULT_PREFERENCES);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsTab, setSettingsTab] = useState<Tab>("assistant");
+  const [toolboxOpen, setToolboxOpen] = useState(false);
+  const [toolboxTool, setToolboxTool] = useState<ToolId>("json");
   const [studioOpen, setStudioOpen] = useState(false);
   const [studioScript, setStudioScript] = useState("");
   const [studioPrompt, setStudioPrompt] = useState("");
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [showTools, setShowTools] = useState(false);
   const [uploading, setUploading] = useState(false);
+  const [showScrollDown, setShowScrollDown] = useState(false);
+  const [dragging, setDragging] = useState(false);
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -200,6 +220,8 @@ export default function ChatMaster() {
   }, []);
 
   const newChat = useCallback(() => {
+    writeDraft(activeId, input);
+    abortRef.current?.abort();
     const chat = createChat();
     setChats((prev) => [chat, ...prev]);
     setActiveId(chat.id);
@@ -207,8 +229,9 @@ export default function ChatMaster() {
     setAttachments([]);
     setShowTools(false);
     setSidebarOpen(false);
+    stickToBottom.current = true;
     textareaRef.current?.focus();
-  }, []);
+  }, [activeId, input]);
 
   // Load saved chats + feature availability on first mount.
   useEffect(() => {
@@ -216,6 +239,7 @@ export default function ChatMaster() {
       const saved = loadState();
       setChats(saved.chats);
       setActiveId(saved.activeId);
+      setInput(readDraft(saved.activeId));
       const prefs = loadPreferences();
       setPreferences(prefs);
       setVoiceOn(prefs.autoSpeak);
@@ -250,6 +274,13 @@ export default function ChatMaster() {
     if (hydrated) savePreferences(preferences);
   }, [preferences, hydrated]);
 
+  // Autosave the composer draft so a reload never loses a half-typed message.
+  useEffect(() => {
+    if (!hydrated) return;
+    const timer = setTimeout(() => writeDraft(activeId, input), 350);
+    return () => clearTimeout(timer);
+  }, [input, activeId, hydrated]);
+
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
     try {
@@ -262,7 +293,8 @@ export default function ChatMaster() {
   useEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
-    el.scrollTop = el.scrollHeight;
+    if (stickToBottom.current) el.scrollTop = el.scrollHeight;
+    else setShowScrollDown(true);
   }, [activeId, messageCount, lastMessageContent]);
 
   useEffect(() => {
@@ -285,8 +317,14 @@ export default function ChatMaster() {
         setSettingsOpen(true);
         return;
       }
+      if ((event.metaKey || event.ctrlKey) && key === ".") {
+        event.preventDefault();
+        setToolboxOpen(true);
+        return;
+      }
       if (event.key === "Escape") {
-        if (studioOpen) setStudioOpen(false);
+        if (toolboxOpen) setToolboxOpen(false);
+        else if (studioOpen) setStudioOpen(false);
         else if (settingsOpen) setSettingsOpen(false);
         else if (showTools) setShowTools(false);
         else if (slashMatches.length) setInput("");
@@ -295,7 +333,7 @@ export default function ChatMaster() {
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [isLoading, settingsOpen, studioOpen, showTools, slashMatches.length, newChat]);
+  }, [isLoading, settingsOpen, studioOpen, toolboxOpen, showTools, slashMatches.length, newChat]);
 
   useEffect(() => {
     return () => {
@@ -311,9 +349,13 @@ export default function ChatMaster() {
   const deleteChat = (id: string) => {
     const target = chats.find((chat) => chat.id === id);
     if (target) revokeMessageMedia(target);
+    writeDraft(id, "");
     setChats((prev) => {
       const next = prev.filter((chat) => chat.id !== id);
-      if (id === activeId) setActiveId(next[0]?.id ?? null);
+      if (id === activeId) {
+        setActiveId(next[0]?.id ?? null);
+        setInput(readDraft(next[0]?.id ?? null));
+      }
       return next;
     });
   };
@@ -334,19 +376,24 @@ export default function ChatMaster() {
   };
 
   const importChats = (list: Chat[]) => {
-    const clean = list.filter(
-      (chat) =>
-        chat &&
-        typeof chat.id === "string" &&
-        typeof chat.title === "string" &&
-        Array.isArray(chat.messages)
-    );
-    if (!clean.length) {
+    const valid = sanitizeImportedChats(list);
+    if (!valid.length) {
       showToast("Import ke liye valid chats nahi mile.", "error");
       return;
     }
+    const existing = new Set(chats.map((chat) => chat.id));
+    const clean = valid.map((chat) => {
+      if (!existing.has(chat.id)) {
+        existing.add(chat.id);
+        return chat;
+      }
+      const fresh = { ...chat, id: newId() };
+      existing.add(fresh.id);
+      return fresh;
+    });
     setChats((prev) => [...clean, ...prev]);
     setActiveId(clean[0].id);
+    setInput(readDraft(clean[0].id));
     showToast(`${clean.length} chats import ho gayiin.`);
   };
 
@@ -500,6 +547,51 @@ export default function ChatMaster() {
     showToast("Reel chat me add ho gayi.");
   };
 
+  const openToolbox = (tool: ToolId = "json") => {
+    setToolboxTool(tool);
+    setToolboxOpen(true);
+  };
+
+  const insertToolResult = (name: string, output: string) => {
+    let targetId = activeId;
+    if (!targetId) {
+      const chat = createChat();
+      targetId = chat.id;
+      setChats((prev) => [chat, ...prev]);
+      setActiveId(chat.id);
+    }
+    const userMessage = makeMessage("user", `🧰 ${name}`);
+    const assistant = makeMessage("assistant", `🧰 **${name}**\n\n\`\`\`text\n${output.slice(0, 20000)}\n\`\`\``, {
+      tools: [{ name, output }],
+    });
+    setChats((prev) =>
+      prev.map((chat) =>
+        chat.id === targetId
+          ? { ...chat, messages: [...chat.messages, userMessage, assistant], updatedAt: Date.now() }
+          : chat
+      )
+    );
+    showToast("Tool result chat me add ho gaya.");
+  };
+
+  const giveFeedback = (messageId: string, value: "up" | "down") => {
+    setChats((prev) =>
+      prev.map((chat) =>
+        chat.id === activeId
+          ? {
+              ...chat,
+              messages: chat.messages.map((message) =>
+                message.id === messageId
+                  ? { ...message, feedback: message.feedback === value ? undefined : value }
+                  : message
+              ),
+            }
+          : chat
+      )
+    );
+    if (value === "down") showToast("Note kar liya — Regenerate se dobara try karein.");
+  };
+
   const sendMessage = async (
     raw?: string,
     options?: { regenerate?: boolean; chatId?: string; base?: Message[] }
@@ -525,9 +617,14 @@ export default function ChatMaster() {
       return;
     }
 
+    // Natural-language shortcuts for the two studios.
+    if (!options?.base && !regenerate && /\b(toolbox|tools?\s+kholo|toolbox\s+kholo)\b/i.test(userText)) {
+      openToolbox();
+      return;
+    }
+
     // Slash commands that change the request before it is sent.
     const command = parseCommand(userText);
-    const detectedTool = command ?? detectTool(userText);
     if (!command && userText.startsWith("/")) {
       const name = userText.split(/\s+/)[0].toLowerCase();
       if (name === "/clear") {
@@ -535,7 +632,12 @@ export default function ChatMaster() {
         return;
       }
       if (name === "/help") {
+        setSettingsTab("shortcuts");
         setSettingsOpen(true);
+        return;
+      }
+      if (name === "/toolbox") {
+        openToolbox();
         return;
       }
       if (name === "/reel" || name === "/studio") {
@@ -589,7 +691,7 @@ export default function ChatMaster() {
       }
       if (assistantIndex === -1) return;
       const previous = chat.messages[assistantIndex];
-      revokeMessageFiles(previous);
+      revokeMessageMediaItem(previous);
       base = chat.messages.slice(0, assistantIndex);
       const lastUser = [...base].reverse().find((m) => m.role === "user");
       if (!lastUser) return;
@@ -602,6 +704,10 @@ export default function ChatMaster() {
       });
       base = [...chat.messages, userMessage];
     }
+
+    // Re-detect after base assembly: edit/regenerate replace `userText` with the
+    // original user message, so tool context must be derived from the final text.
+    const effectiveTool = command ?? detectTool(userText);
 
     const lastUserId = [...base].reverse().find((m) => m.role === "user")?.id;
     const assistantMessage = makeMessage("assistant", "");
@@ -639,8 +745,8 @@ export default function ChatMaster() {
 
     // Tool call (calculator, weather, URL reader, …).
     let toolResults: ToolResult[] = [];
-    if (detectedTool) {
-      const result = await runTool(detectedTool.tool, detectedTool.args);
+    if (effectiveTool) {
+      const result = await runTool(effectiveTool.tool, effectiveTool.args);
       if (result) toolResults = [result];
       updateAssistant(chatId as string, assistantMessage.id, "", { tools: toolResults });
     }
@@ -914,7 +1020,7 @@ export default function ChatMaster() {
       prev.map((chat) => {
         if (chat.id !== activeId) return chat;
         const target = chat.messages.find((m) => m.id === messageId);
-        if (target) revokeMessageFiles(target);
+        if (target) revokeMessageMediaItem(target);
         return { ...chat, messages: chat.messages.filter((m) => m.id !== messageId) };
       })
     );
@@ -925,7 +1031,7 @@ export default function ChatMaster() {
     if (!chat) return;
     const target = chat.messages[index];
     if (!target || target.role !== "user") return;
-    revokeMessageFiles(target);
+    // Keep blob URLs alive — the resent message reuses these attachments.
     const base = chat.messages.slice(0, index);
     base.push({ ...target, content, edited: true });
     void sendMessage(undefined, { chatId: chat.id, base });
@@ -1068,6 +1174,15 @@ export default function ChatMaster() {
     const el = scrollRef.current;
     if (!el) return;
     stickToBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 120;
+    setShowScrollDown(!stickToBottom.current);
+  };
+
+  const scrollToBottom = () => {
+    const el = scrollRef.current;
+    if (!el) return;
+    el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
+    stickToBottom.current = true;
+    setShowScrollDown(false);
   };
 
   return (
@@ -1078,9 +1193,12 @@ export default function ChatMaster() {
         open={sidebarOpen}
         status={effectiveStatus}
         onSelect={(id) => {
+          writeDraft(activeId, input);
           setActiveId(id);
+          setInput(readDraft(id));
           setSidebarOpen(false);
           stickToBottom.current = true;
+          setShowScrollDown(false);
         }}
         onNew={newChat}
         onDelete={deleteChat}
@@ -1137,6 +1255,14 @@ export default function ChatMaster() {
             </button>
             <button
               className="icon-btn"
+              onClick={() => openToolbox()}
+              title="Toolbox — 16 tools (Ctrl+.)"
+              aria-label="Toolbox"
+            >
+              <Boxes size={18} />
+            </button>
+            <button
+              className="icon-btn"
               onClick={() => openStudio()}
               title="Reel / Video Studio (/reel)"
               aria-label="Reel / Video Studio"
@@ -1178,30 +1304,73 @@ export default function ChatMaster() {
             </div>
           ) : (
             <div className="messages-inner">
-              {activeChat.messages.map((message, index) => (
-                <MessageBubble
-                  key={message.id}
-                  message={message}
-                  isLastAssistant={
-                    message.role === "assistant" &&
-                    index === activeChat.messages.length - 1
-                  }
-                  isStreaming={streamingId === message.id}
-                  canSpeak={voiceOutputReady}
-                  onSpeak={speakText}
-                  onRegenerate={() => {
-                    const base = activeChat.messages.slice(0, index);
-                    if (base.length) void sendMessage(undefined, { chatId: activeChat.id, base });
-                  }}
-                  onEdit={(content) => editMessage(index, content)}
-                  onDelete={() => deleteMessage(message.id)}
-                />
-              ))}
+              {activeChat.messages.map((message, index) => {
+                const isLast = message.role === "assistant" && index === activeChat.messages.length - 1;
+                return (
+                  <div key={message.id}>
+                    <MessageBubble
+                      message={message}
+                      isLastAssistant={isLast}
+                      isStreaming={streamingId === message.id}
+                      canSpeak={voiceOutputReady}
+                      onSpeak={speakText}
+                      onRegenerate={() => {
+                        void sendMessage(undefined, { regenerate: true, chatId: activeChat.id });
+                      }}
+                      onEdit={(content) => editMessage(index, content)}
+                      onDelete={() => deleteMessage(message.id)}
+                      onFeedback={(value) => giveFeedback(message.id, value)}
+                    />
+                    {isLast && !isLoading && message.content && (
+                      <div className="followups">
+                        {followUpPrompts(message.content).map((prompt) => (
+                          <button
+                            key={prompt}
+                            type="button"
+                            onClick={() => void sendMessage(prompt)}
+                            title={prompt}
+                          >
+                            <Sparkles size={12} /> {prompt}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
             </div>
+          )}
+          {showScrollDown && (
+            <button
+              className="scroll-bottom-btn"
+              type="button"
+              onClick={scrollToBottom}
+              title="Neeche jayein"
+              aria-label="Neeche jayein"
+            >
+              <ArrowDown size={18} />
+            </button>
           )}
         </div>
 
-        <div className="composer-area">
+        <div
+          className={`composer-area ${dragging ? "dragging" : ""}`}
+          onDragOver={(event) => {
+            event.preventDefault();
+            setDragging(true);
+          }}
+          onDragLeave={(event) => {
+            if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setDragging(false);
+          }}
+          onDrop={(event) => {
+            event.preventDefault();
+            setDragging(false);
+            void addFiles(event.dataTransfer.files);
+          }}
+        >
+          {dragging && (
+            <div className="drop-overlay"><Paperclip size={22} /> Files yahin chhod kar attach karein</div>
+          )}
           {slashMatches.length > 0 && (
             <div className="command-menu" role="listbox" aria-label="Commands">
               {slashMatches.map((item) => (
@@ -1330,9 +1499,12 @@ export default function ChatMaster() {
               value={input}
               onChange={(event) => setInput(event.target.value)}
               onKeyDown={(event) => {
+                // Hindi/Urdu IME: Enter confirms the candidate, it must not send.
+                if (event.nativeEvent.isComposing || event.keyCode === 229) return;
                 if (event.key === "Enter" && !event.shiftKey) {
                   event.preventDefault();
-                  if (slashMatches.length) {
+                  // Pure command like `/help` should execute, not just autocomplete.
+                  if (slashMatches.length && input.trim() !== slashMatches[0].command) {
                     setInput(`${slashMatches[0].command} `);
                     return;
                   }
@@ -1370,7 +1542,7 @@ export default function ChatMaster() {
             )}
           </div>
           <p className="composer-hint">
-            📎 Files · 🖼️ Image · 🎬 Video · / Commands · Enter = bhejein · Shift+Enter = nayi line
+            📎 Files (drag-drop) · 🧰 Toolbox · 🎬 Reel · / Commands · Ctrl+. Toolbox · Enter = bhejein
           </p>
         </div>
 
@@ -1383,7 +1555,9 @@ export default function ChatMaster() {
       </main>
 
       <SettingsModal
+        key={`${settingsOpen}-${settingsTab}`}
         open={settingsOpen}
+        initialTab={settingsTab}
         preferences={preferences}
         chats={chats}
         onClose={() => setSettingsOpen(false)}
@@ -1399,6 +1573,14 @@ export default function ChatMaster() {
         initialPrompt={studioPrompt}
         onClose={() => setStudioOpen(false)}
         onInsert={insertReel}
+      />
+
+      <Toolbox
+        key={`${toolboxOpen}-${toolboxTool}`}
+        open={toolboxOpen}
+        initialTool={toolboxTool}
+        onClose={() => setToolboxOpen(false)}
+        onInsert={insertToolResult}
       />
     </div>
   );

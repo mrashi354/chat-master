@@ -1,16 +1,17 @@
 "use client";
 
 import { useRef, useState } from "react";
-import { Download, FileUp, Plus, Sparkles, Trash2, X } from "lucide-react";
+import { Download, FileText, FileUp, Plus, Sparkles, Trash2, X } from "lucide-react";
 import {
   DEFAULT_PREFERENCES,
   PRESETS,
   type Preferences,
 } from "@/lib/preferences";
-import type { Chat } from "@/lib/chat";
+import { chatsToMarkdown, sanitizeImportedChats, type Chat } from "@/lib/chat";
 
 interface Props {
   open: boolean;
+  initialTab?: Tab;
   preferences: Preferences;
   chats: Chat[];
   onClose: () => void;
@@ -19,7 +20,7 @@ interface Props {
   onClearAll: () => void;
 }
 
-type Tab = "assistant" | "behavior" | "data" | "shortcuts";
+export type Tab = "assistant" | "behavior" | "data" | "shortcuts";
 
 const TABS: { id: Tab; label: string }[] = [
   { id: "assistant", label: "Assistant" },
@@ -30,6 +31,7 @@ const TABS: { id: Tab; label: string }[] = [
 
 export default function SettingsModal({
   open,
+  initialTab = "assistant",
   preferences,
   chats,
   onClose,
@@ -37,7 +39,7 @@ export default function SettingsModal({
   onImport,
   onClearAll,
 }: Props) {
-  const [tab, setTab] = useState<Tab>("assistant");
+  const [tab, setTab] = useState<Tab>(initialTab);
   const [newMemory, setNewMemory] = useState("");
   const importRef = useRef<HTMLInputElement>(null);
   const [error, setError] = useState("");
@@ -58,24 +60,42 @@ export default function SettingsModal({
     setError("");
   };
 
-  const exportChats = () => {
-    const blob = new Blob([JSON.stringify({ version: 1, chats }, null, 2)], {
-      type: "application/json",
-    });
-    const url = URL.createObjectURL(blob);
+  const downloadFile = (content: string, fileName: string, type: string) => {
+    const url = URL.createObjectURL(new Blob([content], { type }));
     const link = document.createElement("a");
     link.href = url;
-    link.download = `chat-master-${new Date().toISOString().slice(0, 10)}.json`;
+    link.download = fileName;
+    document.body.appendChild(link);
     link.click();
-    URL.revokeObjectURL(url);
+    link.remove();
+    // Deferred revoke — some browsers cancel an immediate revoke mid-download.
+    window.setTimeout(() => URL.revokeObjectURL(url), 4000);
+  };
+
+  const exportChats = () => {
+    const safe = sanitizeImportedChats(chats);
+    downloadFile(
+      JSON.stringify({ version: 2, chats: safe }, null, 2),
+      `chat-master-${new Date().toISOString().slice(0, 10)}.json`,
+      "application/json"
+    );
+  };
+
+  const exportMarkdown = () => {
+    downloadFile(
+      chatsToMarkdown(chats),
+      `chat-master-transcript-${new Date().toISOString().slice(0, 10)}.md`,
+      "text/markdown;charset=utf-8"
+    );
   };
 
   const importChats = async (file: File | undefined) => {
     if (!file) return;
     try {
-      const data = JSON.parse(await file.text()) as { chats?: Chat[] } | Chat[];
-      const list = Array.isArray(data) ? data : data.chats;
-      if (!Array.isArray(list)) throw new Error("File me chats array nahi mila");
+      if (file.size > 25 * 1024 * 1024) throw new Error("Backup file 25 MB se bada hai.");
+      const data: unknown = JSON.parse(await file.text());
+      const list = sanitizeImportedChats(data);
+      if (!list.length) throw new Error("File me valid chats nahi mile.");
       onImport(list);
       setError("");
       onClose();
@@ -232,6 +252,9 @@ export default function SettingsModal({
                 <button type="button" onClick={exportChats} disabled={chats.length === 0}>
                   <Download size={16} /> Export {chats.length} chats (JSON)
                 </button>
+                <button type="button" onClick={exportMarkdown} disabled={chats.length === 0}>
+                  <FileText size={16} /> Export transcript (Markdown)
+                </button>
                 <button type="button" onClick={() => importRef.current?.click()}>
                   <FileUp size={16} /> Import JSON
                 </button>
@@ -285,6 +308,7 @@ export default function SettingsModal({
               </ul>
               <h3>Commands</h3>
               <ul className="shortcut-list">
+                <li><span>Toolbox (16 tools)</span><kbd>/toolbox</kbd></li>
                 <li><span>Reel Studio</span><kbd>/reel</kbd></li>
                 <li><span>Image banana</span><kbd>/image</kbd></li>
                 <li><span>Video banana</span><kbd>/video</kbd></li>

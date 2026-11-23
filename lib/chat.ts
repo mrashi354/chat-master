@@ -34,6 +34,7 @@ export interface Message {
   attachments?: Attachment[];
   tools?: ToolResult[];
   edited?: boolean;
+  feedback?: "up" | "down";
 }
 
 export interface Chat {
@@ -139,31 +140,127 @@ export function loadState(): StoredState {
   }
 }
 
+function stripBlobUrls(state: StoredState): StoredState {
+  return {
+    ...state,
+    chats: state.chats.map((chat) => ({
+      ...chat,
+      messages: chat.messages.map((m) => {
+        const attachments = m.attachments?.map((file) => ({
+          ...file,
+          url: file.url?.startsWith("blob:") ? undefined : file.url,
+          text: file.text?.slice(0, 20000),
+        }));
+        return {
+          ...m,
+          media: m.media?.url.startsWith("blob:") ? undefined : m.media,
+          attachments: attachments?.length ? attachments : undefined,
+        };
+      }),
+    })),
+  };
+}
+
 export function saveState(state: StoredState): void {
   if (typeof window === "undefined") return;
   try {
     // Blob URLs are only valid for this tab session — never persist broken links.
-    const safe: StoredState = {
-      ...state,
-      chats: state.chats.map((chat) => ({
-        ...chat,
-        messages: chat.messages.map((m) => {
-          const attachments = m.attachments?.map((file) => ({
-            ...file,
-            url: file.url?.startsWith("blob:") ? undefined : file.url,
-            text: file.text?.slice(0, 20000),
-          }));
-          return {
-            ...m,
-            media: m.media?.url.startsWith("blob:") ? undefined : m.media,
-            attachments: attachments?.length ? attachments : undefined,
-          };
-        }),
-      })),
-    };
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(safe));
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(stripBlobUrls(state)));
   } catch {
     // Storage full or blocked (private mode) — chat still works in memory.
+  }
+}
+
+/** Normalize an imported backup: validate messages, dedupe IDs, drop blob URLs. */
+export function sanitizeImportedChats(input: unknown): Chat[] {
+  const raw = Array.isArray(input)
+    ? input
+    : input && typeof input === "object" && Array.isArray((input as { chats?: unknown }).chats)
+      ? (input as { chats: unknown[] }).chats
+      : [];
+  const seen = new Set<string>();
+  const now = Date.now();
+  const chats: Chat[] = [];
+
+  for (const item of raw.slice(0, 200)) {
+    if (!isChat(item)) continue;
+    const chat = item as Chat;
+    let id = chat.id.slice(0, 120);
+    if (seen.has(id)) id = newId();
+    seen.add(id);
+    const messageIds = new Set<string>();
+    chats.push({
+      id,
+      title: chat.title.slice(0, 160) || "Imported chat",
+      createdAt: Number.isFinite(chat.createdAt) ? chat.createdAt : now,
+      updatedAt: Number.isFinite(chat.updatedAt) ? chat.updatedAt : now,
+      pinned: Boolean(chat.pinned),
+      messages: chat.messages.slice(0, 500).map((message) => {
+        let messageId = String(message.id).slice(0, 120);
+        if (messageIds.has(messageId)) messageId = newId();
+        messageIds.add(messageId);
+        return {
+          ...message,
+          id: messageId,
+          content: String(message.content).slice(0, 30000),
+          feedback: message.feedback === "up" || message.feedback === "down" ? message.feedback : undefined,
+          media: message.media?.url.startsWith("blob:") ? undefined : message.media,
+          attachments: message.attachments
+            ?.map((file) => ({
+              ...file,
+              url: file.url?.startsWith("blob:") ? undefined : file.url,
+              text: file.text?.slice(0, 20000),
+            }))
+            .filter((file) => file.text || file.url || file.name),
+          sources: Array.isArray(message.sources) ? message.sources.slice(0, 10) : undefined,
+          tools: Array.isArray(message.tools) ? message.tools.slice(0, 10) : undefined,
+        };
+      }),
+    });
+  }
+  return chats;
+}
+
+export function chatsToMarkdown(chats: Chat[]): string {
+  const sections = chats.map((chat) => {
+    const header = `# ${chat.title}\n\n_Created: ${new Date(chat.createdAt).toLocaleString()} · ${chat.messages.length} messages_\n`;
+    const body = chat.messages
+      .map((message) => {
+        const who = message.role === "user" ? "**You**" : "**Chat-Master**";
+        const time = new Date(message.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+        const files = message.attachments?.length
+          ? `\n\n📎 ${message.attachments.map((file) => file.name).join(", ")}`
+          : "";
+        const tools = message.tools?.length
+          ? `\n\n🧰 ${message.tools.map((tool) => `${tool.name}: ${tool.output.replace(/[*#`\n]+/g, " ")}`).join(" · ")}`
+          : "";
+        return `### ${who} · ${time}\n\n${message.content}${files}${tools}`;
+      })
+      .join("\n\n---\n\n");
+    return `${header}\n${body || "_No messages yet._"}`;
+  });
+  return `# Chat-Master — Transcript\n\n_Exported: ${new Date().toLocaleString()} · ${chats.length} chats_\n\n---\n\n${sections.join("\n\n---\n\n")}\n`;
+}
+
+const DRAFT_PREFIX = "chat-master:draft:";
+
+export function readDraft(chatId: string | null): string {
+  if (typeof window === "undefined" || !chatId) return "";
+  try {
+    return window.localStorage.getItem(`${DRAFT_PREFIX}${chatId}`) ?? "";
+  } catch {
+    return "";
+  }
+}
+
+export function writeDraft(chatId: string | null, text: string): void {
+  if (typeof window === "undefined" || !chatId) return;
+  try {
+    const key = `${DRAFT_PREFIX}${chatId}`;
+    if (text) window.localStorage.setItem(key, text);
+    else window.localStorage.removeItem(key);
+  } catch {
+    // Storage blocked — draft stays in memory only.
   }
 }
 
@@ -216,16 +313,16 @@ export function looksLikeImageRequest(text: string): boolean {
   return IMAGE_WORDS.some((word) => lower.includes(word));
 }
 
-export function revokeMessageMedia(chat: Chat): void {
+export function revokeMessageMediaItem(message: Message): void {
   if (typeof window === "undefined") return;
-  chat.messages.forEach((message) => {
-    if (message.media?.url.startsWith("blob:")) {
-      URL.revokeObjectURL(message.media.url);
-    }
-    message.attachments?.forEach((file) => {
-      if (file.url?.startsWith("blob:")) URL.revokeObjectURL(file.url);
-    });
+  if (message.media?.url.startsWith("blob:")) URL.revokeObjectURL(message.media.url);
+  message.attachments?.forEach((file) => {
+    if (file.url?.startsWith("blob:")) URL.revokeObjectURL(file.url);
   });
+}
+
+export function revokeMessageMedia(chat: Chat): void {
+  chat.messages.forEach(revokeMessageMediaItem);
 }
 
 /** Removes command words so the remaining text becomes a clean image/video prompt. */

@@ -16,15 +16,19 @@ voice input/output aur har language mein jawab. Aap jis language mein poochho, u
 - 🧠 **Same-language replies** — Hindi, Hinglish, Urdu, English ya koi bhi language — jawab usi mein
 - 📝 **Markdown** — code blocks (copy button ke saath), lists, tables, links — sab clean formatting
 - 📋 **Copy / Regenerate** — ek click se jawab copy ya dobara banwao
-- ⌨️ **Shortcuts** — `Enter` bhejein, `Shift+Enter` nayi line, `⌘/Ctrl+K` nayi chat, `Esc` generation rokein
+- ⌨️ **Shortcuts** — `Enter` bhejein, `Shift+Enter` nayi line, `⌘/Ctrl+K` nayi chat, `⌘/Ctrl+.` Toolbox, `⌘/Ctrl+,` Settings, `Esc` generation rokein
 - 🌗 **Dark / Light theme** — header mein toggle, choice browser mein save
 - 🟢 **Feature status** — jin features ki API key missing hai, unke buttons disabled + tooltip
 - 📎 **File attachments** — PDF (text extraction), TXT/MD/CSV/JSON/code files aur images attach karke un par sawaal; max 5 files, 12 MB each
 - 🧰 **Tools** — calculator, unit converter, live weather (Open-Meteo), web page reader, Wikipedia summary, dictionary aur timezone clock — sab free, bina key ke
-- ⌘ **Slash commands** — `/calc`, `/convert`, `/weather`, `/read`, `/wiki`, `/define`, `/time`, `/reel`, `/image`, `/video`, `/search`, `/clear`, `/help`
+- 🧰 **Toolbox (`/toolbox`, `Ctrl/.`)** — 16 instant client-side tools: JSON formatter, Base64, SHA-256/SHA-1 hash, UUID, strong password generator, regex tester, word/character counter, case converter, URL encode/decode, color converter (hex/rgb/hsl), percentage calculator, date calculator, slugify, lorem generator, number bases aur live Markdown preview. Output ek click se chat me add ho jata hai
+- ⌘ **Slash commands** — `/calc`, `/convert`, `/weather`, `/read`, `/wiki`, `/define`, `/time`, `/toolbox`, `/reel`, `/image`, `/video`, `/search`, `/clear`, `/help`
 - 🧠 **Presets + memory** — Code mentor, Teacher, Writer, Translator jaise personas, custom instructions aur user facts jo har jawab me context ban jaate hain
-- 🗂️ **Advanced chat management** — search, rename, pin, per-message edit/delete, branching regenerate, JSON export/import
-- ⚙️ **Settings panel** — temperature control, auto-search/auto-voice toggles, data backup aur shortcut guide
+- 🗂️ **Advanced chat management** — search, rename, pin, per-message edit/delete, branching regenerate, JSON export/import (validated + duplicate-free)
+- 💾 **Draft autosave** — har chat ka adhoora likha hua message browser me save hota hai; reload ya chat switch ke baad wapas mil jata hai
+- ✨ **Smoother UX** — last jawab ke neeche follow-up suggestion chips, upar scroll karne pe "neeche jayein" button, 👍/👎 feedback, drag-and-drop attachments, IME-safe Enter (Hindi/Urdu typing me gallery accidentally send nahi hoti), single-chat delete confirmation
+- 📤 **Markdown transcript export** — Settings → Data se poori chat history readable `.md` file me download; JSON backup/blob URLs safe clean karke export/import hote hain
+- ⚙️ **Settings panel** — temperature control, auto-search/auto-voice toggles, data backup aur shortcut guide (`/help` seedha Shortcuts tab kholta hai)
 - 🎬 **Reel / Video Studio (`/reel`)** — script ki har line ek scene, apni photos ya auto-generated images, captions, fade/slide transitions, 9:16 / 1:1 / 16:9 format, optional background music, WebM download aur seedha chat me add. Pure browser-side rendering (Chrome/Edge recommended)
 
 ## Setup (pehli baar)
@@ -89,20 +93,21 @@ app/
   api/status/route.ts      → Which features are available
 components/
   Sidebar.tsx              → Chat search, rename, pin, delete, feature status
-  MessageBubble.tsx        → Edit/delete, attachments, tool results, sources, streaming
+  MessageBubble.tsx        → Edit/delete, feedback, attachments, tool results, sources, streaming
   Markdown.tsx             → Markdown + copyable code blocks
-  SettingsModal.tsx        → Presets, memory, behavior, export/import, shortcuts
+  SettingsModal.tsx        → Presets, memory, behavior, JSON/Markdown export, import, shortcuts
+  Toolbox.tsx              → 16 browser-side utility tools with chat insert
   VideoStudio.tsx          → Script-to-reel renderer (canvas + MediaRecorder, music, captions)
 lib/
-  chat.ts                  → Types, localStorage persistence, helpers
+  chat.ts                  → Types, localStorage persistence, draft autosave, import sanitization, helpers
   media.ts                 → Image fetch + browser-side video clip
   preferences.ts           → Presets, memory, temperature, settings storage
   server-config.ts         → Key validation, model config
   tools.ts                 → Tool/command definitions aur detection
 ```
 
-Chats **sirf is browser ke localStorage** mein rehte hain — koi server DB nahi. Clear karne ke liye
-browser devtools → Application → Local Storage → `chat-master:chats:v1` delete karein.
+Chats aur drafts **sirf is browser ke localStorage** mein rehte hain — koi server DB nahi. Clear karne ke liye
+browser devtools → Application → Local Storage → `chat-master:chats:v1` (chats) aur `chat-master:draft:<chat-id>` (drafts) delete karein.
 
 ## Troubleshooting
 

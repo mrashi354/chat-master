@@ -177,7 +177,11 @@ export default function Sidebar({
                     </button>
                     <button
                       className="chat-delete"
-                      onClick={() => onDelete(chat.id)}
+                      onClick={() => {
+                        if (window.confirm(`"${chat.title}" delete karein? Ye wapas nahi aayegi.`)) {
+                          onDelete(chat.id);
+                        }
+                      }}
                       title="Chat delete karein"
                       aria-label={`Delete ${chat.title}`}
                     >

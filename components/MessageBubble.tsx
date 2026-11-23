@@ -10,6 +10,8 @@ import {
   Pencil,
   RotateCcw,
   Sparkles,
+  ThumbsDown,
+  ThumbsUp,
   Trash2,
   Volume2,
   Wrench,
@@ -27,6 +29,7 @@ interface Props {
   onRegenerate: () => void;
   onEdit: (content: string) => void;
   onDelete: () => void;
+  onFeedback: (value: "up" | "down") => void;
 }
 
 function AttachmentCard({ file }: { file: Attachment }) {
@@ -62,6 +65,7 @@ export default function MessageBubble({
   onRegenerate,
   onEdit,
   onDelete,
+  onFeedback,
 }: Props) {
   const [copied, setCopied] = useState(false);
   const [editing, setEditing] = useState(false);
@@ -74,12 +78,23 @@ export default function MessageBubble({
 
   const copy = async () => {
     try {
-      await navigator.clipboard.writeText(message.content);
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(message.content);
+      } else {
+        const helper = document.createElement("textarea");
+        helper.value = message.content;
+        helper.style.position = "fixed";
+        helper.style.opacity = "0";
+        document.body.appendChild(helper);
+        helper.select();
+        document.execCommand("copy");
+        helper.remove();
+      }
       setCopied(true);
       if (timer.current) clearTimeout(timer.current);
       timer.current = setTimeout(() => setCopied(false), 1600);
     } catch {
-      // Clipboard blocked — silently ignore.
+      setCopied(false);
     }
   };
 
@@ -239,6 +254,26 @@ export default function MessageBubble({
                 <span>Sunao</span>
               </button>
             )}
+            <button
+              type="button"
+              className={message.feedback === "up" ? "active" : ""}
+              onClick={() => onFeedback("up")}
+              title="Achha jawab"
+              aria-label="Achha jawab"
+              aria-pressed={message.feedback === "up"}
+            >
+              <ThumbsUp size={14} /> <span>Achha</span>
+            </button>
+            <button
+              type="button"
+              className={message.feedback === "down" ? "active" : ""}
+              onClick={() => onFeedback("down")}
+              title="Jawab theek nahi"
+              aria-label="Jawab theek nahi"
+              aria-pressed={message.feedback === "down"}
+            >
+              <ThumbsDown size={14} /> <span>Sudharo</span>
+            </button>
             {isLastAssistant && (
               <button
                 type="button"
