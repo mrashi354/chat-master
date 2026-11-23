@@ -17,7 +17,8 @@ import {
 import { fetchImageBlob } from "@/lib/media";
 
 type Aspect = "9:16" | "1:1" | "16:9";
-type Transition = "fade" | "slide" | "none";
+type Transition = "fade" | "slide" | "zoom" | "wipe" | "none";
+type Motion = "cinematic" | "soft" | "dramatic" | "static";
 
 interface SceneImage {
   id: string;
@@ -44,6 +45,63 @@ const SAMPLE_SCRIPT = [
   "Chai ki pyali me garam yaadon ki bhap",
   "Har naya din ek nayi kahani likhta hai",
 ].join("\n");
+
+const clamp01 = (value: number) => Math.max(0, Math.min(1, value));
+const easeInOutCubic = (t: number) =>
+  t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+const easeOutCubic = (t: number) => 1 - Math.pow(1 - clamp01(t), 3);
+
+/** Deterministic camera path so the same scene always moves the same way. */
+function cameraFor(motion: Motion, progress: number, index: number) {
+  const p = clamp01(progress);
+  const e = easeInOutCubic(p);
+  const dir = index % 2 === 0 ? 1 : -1;
+  switch (motion) {
+    case "static":
+      return { zoom: 1.04, panX: 0, panY: 0 };
+    case "soft":
+      return {
+        zoom: 1.02 + e * 0.06,
+        panX: Math.sin(e * Math.PI) * dir * 0.18,
+        panY: -Math.sin(e * Math.PI) * 0.08,
+      };
+    case "dramatic":
+      return {
+        zoom: 1.2 - e * 0.13 + Math.sin(e * Math.PI) * 0.03,
+        panX: dir * (0.85 - e * 1.7),
+        panY: dir * 0.22 * (1 - e),
+      };
+    case "cinematic":
+    default:
+      return {
+        zoom: 1.06 + e * 0.1,
+        panX: dir * (0.5 - e),
+        panY: (index % 3 === 0 ? -1 : 1) * 0.14 * (1 - e),
+      };
+  }
+}
+
+function roundedRect(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+  radius: number
+) {
+  const r = Math.min(radius, width / 2, height / 2);
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.lineTo(x + width - r, y);
+  ctx.quadraticCurveTo(x + width, y, x + width, y + r);
+  ctx.lineTo(x + width, y + height - r);
+  ctx.quadraticCurveTo(x + width, y + height, x + width - r, y + height);
+  ctx.lineTo(x + r, y + height);
+  ctx.quadraticCurveTo(x, y + height, x, y + height - r);
+  ctx.lineTo(x, y + r);
+  ctx.quadraticCurveTo(x, y, x + r, y);
+  ctx.closePath();
+}
 
 function parseScenes(script: string): string[] {
   const raw = script
@@ -82,18 +140,24 @@ function wrapText(ctx: CanvasRenderingContext2D, text: string, maxWidth: number,
   return lines;
 }
 
+/** Cover-fit with pan values expressed as a fraction of the available overflow. */
 function drawCover(
   ctx: CanvasRenderingContext2D,
   image: HTMLImageElement,
   width: number,
   height: number,
   zoom: number,
-  offsetX = 0
+  panX = 0,
+  panY = 0
 ) {
   const scale = Math.max(width / image.naturalWidth, height / image.naturalHeight) * zoom;
   const w = image.naturalWidth * scale;
   const h = image.naturalHeight * scale;
-  ctx.drawImage(image, (width - w) / 2 + offsetX, (height - h) / 2, w, h);
+  const maxX = Math.max(0, (w - width) / 2);
+  const maxY = Math.max(0, (h - height) / 2);
+  const x = (width - w) / 2 + Math.max(-1, Math.min(1, panX)) * maxX;
+  const y = (height - h) / 2 + Math.max(-1, Math.min(1, panY)) * maxY;
+  ctx.drawImage(image, x, y, w, h);
 }
 
 interface DrawOptions {
@@ -105,21 +169,27 @@ interface DrawOptions {
   sceneDuration: number;
   showCaption: boolean;
   transition: Transition;
+  motion: Motion;
   background: string;
 }
 
 function drawFrame(options: DrawOptions) {
-  const { canvas, images, scenes, theme, elapsed, sceneDuration, showCaption, transition, background } = options;
+  const { canvas, images, scenes, theme, elapsed, sceneDuration, showCaption, transition, motion, background } = options;
   const ctx = canvas.getContext("2d");
   if (!ctx) return;
   const w = canvas.width;
   const h = canvas.height;
   const safeScenes = scenes?.length ? scenes : ["Aapki kahani yahaan dikhegi"];
-  const rawIndex = Math.floor(elapsed / (sceneDuration > 0 ? sceneDuration : 3));
+  const duration = sceneDuration > 0 ? sceneDuration : 3;
+  const rawIndex = Math.floor(elapsed / duration);
   const index = Math.max(0, Math.min(safeScenes.length - 1, Number.isFinite(rawIndex) ? rawIndex : 0));
-  const local = Math.max(0, elapsed - index * sceneDuration);
+  const local = Math.max(0, Math.min(duration, elapsed - index * duration));
+  const progress = clamp01(local / duration);
   const image = images.length ? images[index % images.length] : null;
+  const previous = images.length > 1 ? images[(index - 1 + images.length) % images.length] : null;
+  const unit = w / 540;
 
+  // Backdrop — visible behind images during transitions and for image-less reels.
   const gradient = ctx.createLinearGradient(0, 0, w, h);
   gradient.addColorStop(0, background);
   gradient.addColorStop(1, "#05070d");
@@ -127,30 +197,66 @@ function drawFrame(options: DrawOptions) {
   ctx.fillRect(0, 0, w, h);
 
   if (image?.complete && image.naturalWidth) {
-    const zoom = 1.03 + Math.min(0.09, local / Math.max(sceneDuration, 1) * 0.09);
-    if (transition !== "none" && local < 0.45 && index > 0) {
-      const previous = images[(index - 1) % images.length];
-      if (previous?.complete && previous.naturalWidth) {
-        ctx.save();
-        ctx.globalAlpha = 1 - local / 0.45;
-        drawCover(ctx, previous, w, h, 1.08);
-        ctx.restore();
-      }
+    const cam = cameraFor(motion, progress, index);
+    const t = clamp01(local / 0.55);
+    const eased = easeInOutCubic(t);
+    const hasPrev = index > 0 && transition !== "none" && Boolean(previous?.complete && previous?.naturalWidth);
+
+    if (hasPrev && previous) {
+      ctx.save();
+      if (transition === "fade" || transition === "zoom") ctx.globalAlpha = 1 - eased;
+      const prevCam = cameraFor(motion, 1, index - 1);
+      drawCover(ctx, previous, w, h, prevCam.zoom, prevCam.panX, prevCam.panY);
+      ctx.restore();
     }
+
     ctx.save();
-    if (transition === "fade" && local < 0.45) ctx.globalAlpha = Math.min(1, local / 0.45);
-    const offset = transition === "slide" && local < 0.45 ? (1 - local / 0.45) * w * 0.18 : 0;
-    drawCover(ctx, image, w, h, zoom, offset);
+    if (transition === "fade" && hasPrev) ctx.globalAlpha = eased;
+    if (transition === "zoom") {
+      drawCover(ctx, image, w, h, cam.zoom + (1 - eased) * 0.14, cam.panX * eased, cam.panY * eased);
+    } else if (transition === "slide" && hasPrev) {
+      ctx.beginPath();
+      ctx.rect(w * eased, 0, w * (1 - eased), h);
+      ctx.clip();
+      drawCover(ctx, image, w, h, cam.zoom, cam.panX, cam.panY);
+    } else if (transition === "wipe" && hasPrev) {
+      ctx.beginPath();
+      ctx.arc(w / 2, h / 2, Math.hypot(w, h) * 0.55 * eased, 0, Math.PI * 2);
+      ctx.clip();
+      drawCover(ctx, image, w, h, cam.zoom, cam.panX, cam.panY);
+    } else {
+      drawCover(ctx, image, w, h, cam.zoom, cam.panX, cam.panY);
+    }
     ctx.restore();
   } else if (!images.length) {
+    const drift = Math.sin(progress * Math.PI * 2) * w * 0.04;
     ctx.fillStyle = "rgba(255,255,255,0.05)";
     for (let i = 0; i < 6; i++) {
       ctx.beginPath();
       const r = (w * (0.12 + i * 0.05)) / 2;
-      ctx.arc(w * (0.2 + (i % 3) * 0.3), h * (0.25 + Math.floor(i / 3) * 0.45), r, 0, Math.PI * 2);
+      ctx.arc(
+        w * (0.2 + (i % 3) * 0.3) + drift * (i % 2 ? -1 : 1),
+        h * (0.25 + Math.floor(i / 3) * 0.45),
+        r,
+        0,
+        Math.PI * 2
+      );
       ctx.fill();
     }
   }
+
+  // Cinematic overlays: vignette + top/bottom gradients.
+  const vignette = ctx.createRadialGradient(w / 2, h * 0.42, w * 0.18, w / 2, h * 0.42, Math.hypot(w, h) * 0.62);
+  vignette.addColorStop(0, "rgba(0,0,0,0)");
+  vignette.addColorStop(1, "rgba(0,0,0,0.5)");
+  ctx.fillStyle = vignette;
+  ctx.fillRect(0, 0, w, h);
+
+  const topShade = ctx.createLinearGradient(0, 0, 0, h * 0.25);
+  topShade.addColorStop(0, "rgba(0,0,0,0.42)");
+  topShade.addColorStop(1, "rgba(0,0,0,0)");
+  ctx.fillStyle = topShade;
+  ctx.fillRect(0, 0, w, h * 0.25);
 
   const shade = ctx.createLinearGradient(0, h * 0.45, 0, h);
   shade.addColorStop(0, "rgba(0,0,0,0)");
@@ -158,40 +264,83 @@ function drawFrame(options: DrawOptions) {
   ctx.fillStyle = shade;
   ctx.fillRect(0, h * 0.4, w, h * 0.6);
 
-  const unit = w / 540;
+  // Header + per-scene progress line.
+  const headerWidth = w - 48 * unit;
   ctx.textAlign = "left";
-  ctx.fillStyle = "rgba(255,255,255,0.75)";
+  ctx.fillStyle = "rgba(255,255,255,0.78)";
   ctx.font = `600 ${Math.round(15 * unit)}px Arial, sans-serif`;
   ctx.fillText("✦ Chat-Master Reel", 24 * unit, 40 * unit);
   ctx.textAlign = "right";
   ctx.fillText(`${index + 1}/${safeScenes.length}`, w - 24 * unit, 40 * unit);
+  ctx.fillStyle = "rgba(255,255,255,0.14)";
+  ctx.fillRect(24 * unit, 52 * unit, headerWidth, 2 * unit);
+  ctx.fillStyle = "#7c8cff";
+  ctx.fillRect(24 * unit, 52 * unit, headerWidth * progress, 2 * unit);
 
-  if (showCaption) {
-    ctx.textAlign = "center";
-    ctx.font = `700 ${Math.round(34 * unit)}px Arial, "Noto Sans Devanagari", sans-serif`;
-    ctx.fillStyle = "#ffffff";
-    ctx.shadowColor = "rgba(0,0,0,0.85)";
-    ctx.shadowBlur = 12 * unit;
-    const lines = wrapText(ctx, safeScenes[index], w - 72 * unit);
-    const lineHeight = 44 * unit;
-    const startY = h - (96 + (lines.length - 1) * 22) * unit;
-    lines.forEach((line, i) => ctx.fillText(line, w / 2, startY + i * lineHeight));
-    ctx.shadowBlur = 0;
+  // Caption: fades/slides in line-by-line and eases out near the scene end.
+  if (showCaption && safeScenes[index]?.trim()) {
+    const fadeIn = easeOutCubic(local / 0.42);
+    const fadeOut = 1 - easeInOutCubic(clamp01((local - (duration - 0.4)) / 0.4));
+    const alpha = Math.max(0, Math.min(fadeIn, fadeOut));
+    if (alpha > 0.01) {
+      const fontSize = 34 * unit;
+      ctx.textAlign = "center";
+      ctx.font = `700 ${Math.round(fontSize)}px Arial, "Noto Sans Devanagari", sans-serif`;
+      const lines = wrapText(ctx, safeScenes[index], w - 72 * unit);
+      const lineHeight = 44 * unit;
+      const startY = h - (96 + (lines.length - 1) * 22) * unit;
+      const widest = Math.max(...lines.map((line) => ctx.measureText(line).width));
+      const padX = 18 * unit;
+      const padY = 12 * unit;
+      const boxW = Math.min(w - 40 * unit, widest + padX * 2);
+      const boxY = startY - fontSize - padY;
+      const boxH = lines.length * lineHeight + padY * 2 - (lineHeight - fontSize);
+
+      ctx.save();
+      ctx.globalAlpha = alpha * 0.9;
+      ctx.fillStyle = "rgba(6,8,18,0.46)";
+      roundedRect(ctx, (w - boxW) / 2, boxY, boxW, boxH, 14 * unit);
+      ctx.fill();
+      ctx.strokeStyle = "rgba(255,255,255,0.1)";
+      ctx.lineWidth = Math.max(1, unit);
+      ctx.stroke();
+      ctx.fillStyle = "#fff";
+      ctx.shadowColor = "rgba(0,0,0,0.9)";
+      ctx.shadowBlur = 10 * unit;
+      lines.forEach((line, i) => {
+        const lineAlpha = clamp01(fadeIn * 1.8 - i * 0.28) * fadeOut;
+        ctx.globalAlpha = alpha * lineAlpha;
+        ctx.fillText(
+          line,
+          w / 2 + (1 - lineAlpha) * 10 * unit * (i % 2 ? -1 : 1),
+          startY + i * lineHeight + (1 - lineAlpha) * 8 * unit
+        );
+      });
+      ctx.restore();
+    }
   }
 
   if (theme.trim()) {
+    ctx.save();
     ctx.textAlign = "center";
     ctx.fillStyle = "rgba(255,255,255,0.62)";
     ctx.font = `500 ${Math.round(16 * unit)}px Arial, sans-serif`;
     ctx.fillText(theme.trim().slice(0, 60), w / 2, h - 34 * unit);
+    ctx.restore();
   }
 
-  const totalDuration = (sceneDuration > 0 ? sceneDuration : 3) * safeScenes.length;
-  const progress = Math.max(0, Math.min(1, elapsed / totalDuration));
-  ctx.fillStyle = "rgba(255,255,255,0.18)";
-  ctx.fillRect(0, h - 6 * unit, w, 6 * unit);
+  const totalDuration = Math.max(0.001, duration * safeScenes.length);
+  const overall = clamp01(elapsed / totalDuration);
+  ctx.fillStyle = "rgba(255,255,255,0.16)";
+  roundedRect(ctx, 0, h - 6 * unit, w, 6 * unit, 3 * unit);
+  ctx.fill();
+  ctx.save();
+  ctx.shadowColor = "#7c8cff";
+  ctx.shadowBlur = 12 * unit;
   ctx.fillStyle = "#7c8cff";
-  ctx.fillRect(0, h - 6 * unit, w * progress, 6 * unit);
+  roundedRect(ctx, 0, h - 6 * unit, Math.max(1, w * overall), 6 * unit, 3 * unit);
+  ctx.fill();
+  ctx.restore();
 }
 
 export default function VideoStudio({
@@ -209,6 +358,7 @@ export default function VideoStudio({
   const [aspect, setAspect] = useState<Aspect>("9:16");
   const [sceneDuration, setSceneDuration] = useState(3);
   const [transition, setTransition] = useState<Transition>("fade");
+  const [motion, setMotion] = useState<Motion>("cinematic");
   const [showCaption, setShowCaption] = useState(true);
   const [background, setBackground] = useState("#1b2350");
   const [rendering, setRendering] = useState(false);
@@ -219,6 +369,7 @@ export default function VideoStudio({
   const [error, setError] = useState("");
 
   const previewRef = useRef<HTMLCanvasElement>(null);
+  const previewFrameRef = useRef<number | null>(null);
   const renderRef = useRef<HTMLCanvasElement | null>(null);
   const imageElsRef = useRef<HTMLImageElement[]>([]);
   const cancelRef = useRef<(() => void) | null>(null);
@@ -236,6 +387,7 @@ export default function VideoStudio({
     resultUrlRef.current = resultUrl;
   }, [images, audioUrl, resultUrl]);
 
+  // Live preview loops through the same motion/transition code used by the renderer.
   useEffect(() => {
     let cancelled = false;
     const elements = images.map((item) => {
@@ -247,24 +399,40 @@ export default function VideoStudio({
       if (cancelled) return;
       imageElsRef.current = elements;
       const canvas = previewRef.current;
-      if (canvas) {
-        canvas.width = size.width;
-        canvas.height = size.height;
+      if (!canvas) return;
+      canvas.width = size.width;
+      canvas.height = size.height;
+      if (previewFrameRef.current !== null) cancelAnimationFrame(previewFrameRef.current);
+
+      const started = performance.now();
+      const total = Math.max(1, scenes.length * sceneDuration);
+      const loop = (now: number) => {
+        if (cancelled) return;
+        const elapsed = ((now - started) / 1000) % total;
         drawFrame({
           canvas,
           images: elements,
           scenes,
           theme,
-          elapsed: 0,
+          elapsed,
           sceneDuration,
           showCaption,
           transition,
+          motion,
           background,
         });
-      }
+        previewFrameRef.current = requestAnimationFrame(loop);
+      };
+      loop(started);
     });
-    return () => { cancelled = true; };
-  }, [images, scenes, theme, size.width, size.height, sceneDuration, showCaption, transition, background]);
+    return () => {
+      cancelled = true;
+      if (previewFrameRef.current !== null) {
+        cancelAnimationFrame(previewFrameRef.current);
+        previewFrameRef.current = null;
+      }
+    };
+  }, [images, scenes, theme, size.width, size.height, sceneDuration, showCaption, transition, motion, background]);
 
   useEffect(() => {
     return () => {
@@ -457,6 +625,7 @@ export default function VideoStudio({
         sceneDuration,
         showCaption,
         transition,
+        motion,
         background,
       });
       setProgress(Math.min(99, Math.round((elapsed / total) * 100)));
@@ -476,6 +645,7 @@ export default function VideoStudio({
       sceneDuration,
       showCaption,
       transition,
+      motion,
       background,
     });
     recorder.start(250);
@@ -600,10 +770,21 @@ export default function VideoStudio({
                 </select>
               </label>
               <label>
+                <span>Camera motion</span>
+                <select value={motion} onChange={(event) => setMotion(event.target.value as Motion)}>
+                  <option value="cinematic">Cinematic pan</option>
+                  <option value="soft">Soft zoom</option>
+                  <option value="dramatic">Dramatic push</option>
+                  <option value="static">Static</option>
+                </select>
+              </label>
+              <label>
                 <span>Transition</span>
                 <select value={transition} onChange={(event) => setTransition(event.target.value as Transition)}>
                   <option value="fade">Fade</option>
                   <option value="slide">Slide</option>
+                  <option value="zoom">Zoom</option>
+                  <option value="wipe">Circle wipe</option>
                   <option value="none">None</option>
                 </select>
               </label>
@@ -663,7 +844,7 @@ export default function VideoStudio({
                 </div>
               </div>
             ) : (
-              <p className="modal-note">Preview upar dikhega. Photos + script set karke “Reel banaayein” dabayein.</p>
+              <p className="modal-note">Preview ab live animate hota hai — motion/transition badalte hi dikhega. Photos + script set karke “Reel banaayein” dabayein.</p>
             )}
           </div>
         </div>

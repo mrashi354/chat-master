@@ -29,7 +29,7 @@ voice input/output aur har language mein jawab. Aap jis language mein poochho, u
 - ✨ **Smoother UX** — last jawab ke neeche follow-up suggestion chips, upar scroll karne pe "neeche jayein" button, 👍/👎 feedback, drag-and-drop attachments, IME-safe Enter (Hindi/Urdu typing me gallery accidentally send nahi hoti), single-chat delete confirmation
 - 📤 **Markdown transcript export** — Settings → Data se poori chat history readable `.md` file me download; JSON backup/blob URLs safe clean karke export/import hote hain
 - ⚙️ **Settings panel** — temperature control, auto-search/auto-voice toggles, data backup aur shortcut guide (`/help` seedha Shortcuts tab kholta hai)
-- 🎬 **Reel / Video Studio (`/reel`)** — script ki har line ek scene, apni photos ya auto-generated images, captions, fade/slide transitions, 9:16 / 1:1 / 16:9 format, optional background music, WebM download aur seedha chat me add. Pure browser-side rendering (Chrome/Edge recommended)
+- 🎬 **Reel / Video Studio (`/reel`)** — script ki har line ek scene, apni photos ya auto-generated images, **cinematic camera motion** (Cinematic pan / Soft zoom / Dramatic push / Static), 5 transitions (Fade, Slide, Zoom, Circle wipe, None), animated line-by-line captions, vignette + glow progress, **live animated preview**, 9:16 / 1:1 / 16:9 format, optional background music, WebM download aur seedha chat me add. Pure browser-side rendering (Chrome/Edge recommended)
 
 ## Setup (pehli baar)
 
