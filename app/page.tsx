@@ -1,26 +1,33 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertCircle,
   ArrowUp,
   BookOpen,
   CloudSun,
   Code2,
+  FileText,
+  Film,
   Globe,
   Image as ImageIcon,
   Menu,
   Mic,
   Moon,
+  Paperclip,
   Plus,
+  Settings2,
   Sparkles,
   Square,
   Sun,
   Video,
   Volume2,
   VolumeX,
+  Wrench,
 } from "lucide-react";
 import MessageBubble from "@/components/MessageBubble";
+import SettingsModal from "@/components/SettingsModal";
+import VideoStudio from "@/components/VideoStudio";
 import Sidebar from "@/components/Sidebar";
 import {
   createChat,
@@ -37,22 +44,56 @@ import {
   saveState,
   titleFromMessage,
   toApiMessages,
+  type Attachment,
   type Chat,
   type FeatureStatus,
   type MediaAsset,
   type Message,
   type Source,
 } from "@/lib/chat";
+import {
+  DEFAULT_PREFERENCES,
+  loadPreferences,
+  savePreferences,
+  systemAddition,
+  type Preferences,
+} from "@/lib/preferences";
 import { createVideoFromImage, fetchImageBlob } from "@/lib/media";
+import {
+  detectTool,
+  parseCommand,
+  TOOL_COMMANDS,
+  type ToolName,
+  type ToolResult,
+} from "@/lib/tools";
 
 const SUGGESTIONS = [
   { text: "Aaj ka mausam kaisa hai?", icon: CloudSun },
   { text: "Python me ek chota example likho", icon: Code2 },
   { text: "Mujhe ek short story sunao", icon: BookOpen },
   { text: "Ek cute cat ki image banao", icon: ImageIcon },
-  { text: "Samundar ki short video banao", icon: Video },
+  { text: "/calc (12*8)+sqrt(81)", icon: Wrench },
+  { text: "3 scene ki reel banao", icon: Film },
   { text: "Newton ke laws samjhao", icon: Sparkles },
 ] as const;
+
+const COMMANDS = [
+  ...TOOL_COMMANDS.map((item) => ({
+    command: item.command,
+    label: item.title,
+    hint: item.hint,
+  })),
+  { command: "/reel", label: "Reel Studio", hint: "Script + photos se reel/video banayein" },
+  { command: "/image", label: "Image banana", hint: "AI se image generate karein" },
+  { command: "/video", label: "Video banana", hint: "Image se animated clip (khali chhodkar studio kholein)" },
+  { command: "/search", label: "Web search", hint: "Live web results ke saath jawab" },
+  { command: "/clear", label: "Nayi chat", hint: "Current chat clear karein" },
+  { command: "/help", label: "Madad", hint: "Commands aur shortcuts" },
+];
+
+const TEXT_FILE = /\.(txt|md|markdown|csv|json|log|xml|ya?ml|js|jsx|ts|tsx|py|java|css|html|sql|sh|env|ini|toml)$/i;
+const MAX_ATTACHMENTS = 5;
+const MAX_FILE_BYTES = 12 * 1024 * 1024;
 
 type Toast = { id: string; text: string; tone: "info" | "error" };
 type Theme = "dark" | "light";
@@ -77,6 +118,23 @@ type SpeechWindow = Window & {
 
 const THEME_KEY = "chat-master:theme";
 
+function revokeMessageFiles(message: Message) {
+  if (typeof window === "undefined") return;
+  if (message.media?.url.startsWith("blob:")) URL.revokeObjectURL(message.media.url);
+  message.attachments?.forEach((file) => {
+    if (file.url?.startsWith("blob:")) URL.revokeObjectURL(file.url);
+  });
+}
+
+function timezoneHint(): string {
+  try {
+    const zone = Intl.DateTimeFormat().resolvedOptions().timeZone || "";
+    return zone.split("/").pop()?.replace(/_/g, " ") ?? "";
+  } catch {
+    return "";
+  }
+}
+
 export default function ChatMaster() {
   const [chats, setChats] = useState<Chat[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
@@ -95,9 +153,18 @@ export default function ChatMaster() {
   const [theme, setTheme] = useState<Theme>("dark");
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [toast, setToast] = useState<Toast | null>(null);
+  const [preferences, setPreferences] = useState<Preferences>(DEFAULT_PREFERENCES);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [studioOpen, setStudioOpen] = useState(false);
+  const [studioScript, setStudioScript] = useState("");
+  const [studioPrompt, setStudioPrompt] = useState("");
+  const [attachments, setAttachments] = useState<Attachment[]>([]);
+  const [showTools, setShowTools] = useState(false);
+  const [uploading, setUploading] = useState(false);
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
   const stickToBottom = useRef(true);
   const abortRef = useRef<AbortController | null>(null);
   const audioAbortRef = useRef<AbortController | null>(null);
@@ -119,6 +186,12 @@ export default function ChatMaster() {
     voiceInput: voiceInputReady,
     voiceOutput: voiceOutputReady,
   };
+  const slashMatches = useMemo(() => {
+    const match = input.match(/^\/([a-z]*)$/i);
+    if (!match) return [];
+    const term = match[1].toLowerCase();
+    return COMMANDS.filter((item) => item.command.slice(1).startsWith(term)).slice(0, 7);
+  }, [input]);
 
   const showToast = useCallback((text: string, tone: Toast["tone"] = "info") => {
     setToast({ id: newId(), text, tone });
@@ -126,13 +199,26 @@ export default function ChatMaster() {
     toastTimer.current = setTimeout(() => setToast(null), 3600);
   }, []);
 
+  const newChat = useCallback(() => {
+    const chat = createChat();
+    setChats((prev) => [chat, ...prev]);
+    setActiveId(chat.id);
+    setInput("");
+    setAttachments([]);
+    setShowTools(false);
+    setSidebarOpen(false);
+    textareaRef.current?.focus();
+  }, []);
+
   // Load saved chats + feature availability on first mount.
   useEffect(() => {
-    // Defer to after hydration so server and client render the same HTML.
     const timer = setTimeout(() => {
       const saved = loadState();
       setChats(saved.chats);
       setActiveId(saved.activeId);
+      const prefs = loadPreferences();
+      setPreferences(prefs);
+      setVoiceOn(prefs.autoSpeak);
       setHydrated(true);
       const savedTheme = window.localStorage.getItem(THEME_KEY);
       if (savedTheme === "dark" || savedTheme === "light") setTheme(savedTheme);
@@ -148,7 +234,6 @@ export default function ChatMaster() {
       .then((data: FeatureStatus | null) => {
         if (!data) return;
         setStatus(data);
-        if (data.voiceOutput || "speechSynthesis" in window) setVoiceOn(true);
       })
       .catch(() => {
         // Offline — chat still works if the server is up.
@@ -160,6 +245,10 @@ export default function ChatMaster() {
   useEffect(() => {
     if (hydrated) saveState({ chats, activeId });
   }, [chats, activeId, hydrated]);
+
+  useEffect(() => {
+    if (hydrated) savePreferences(preferences);
+  }, [preferences, hydrated]);
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
@@ -185,20 +274,28 @@ export default function ChatMaster() {
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
+      const key = event.key.toLowerCase();
+      if ((event.metaKey || event.ctrlKey) && key === "k") {
         event.preventDefault();
-        const chat = createChat();
-        setChats((prev) => [chat, ...prev]);
-        setActiveId(chat.id);
-        setInput("");
-        setSidebarOpen(false);
-        textareaRef.current?.focus();
+        newChat();
+        return;
       }
-      if (event.key === "Escape" && isLoading) abortRef.current?.abort();
+      if ((event.metaKey || event.ctrlKey) && key === ",") {
+        event.preventDefault();
+        setSettingsOpen(true);
+        return;
+      }
+      if (event.key === "Escape") {
+        if (studioOpen) setStudioOpen(false);
+        else if (settingsOpen) setSettingsOpen(false);
+        else if (showTools) setShowTools(false);
+        else if (slashMatches.length) setInput("");
+        else if (isLoading) abortRef.current?.abort();
+      }
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [isLoading]);
+  }, [isLoading, settingsOpen, studioOpen, showTools, slashMatches.length, newChat]);
 
   useEffect(() => {
     return () => {
@@ -211,15 +308,6 @@ export default function ChatMaster() {
     };
   }, []);
 
-  const newChat = () => {
-    const chat = createChat();
-    setChats((prev) => [chat, ...prev]);
-    setActiveId(chat.id);
-    setInput("");
-    setSidebarOpen(false);
-    textareaRef.current?.focus();
-  };
-
   const deleteChat = (id: string) => {
     const target = chats.find((chat) => chat.id === id);
     if (target) revokeMessageMedia(target);
@@ -228,6 +316,38 @@ export default function ChatMaster() {
       if (id === activeId) setActiveId(next[0]?.id ?? null);
       return next;
     });
+  };
+
+  const renameChat = (id: string, title: string) => {
+    setChats((prev) => prev.map((chat) => (chat.id === id ? { ...chat, title } : chat)));
+  };
+
+  const togglePin = (id: string) => {
+    setChats((prev) => prev.map((chat) => (chat.id === id ? { ...chat, pinned: !chat.pinned } : chat)));
+  };
+
+  const clearAllChats = () => {
+    chats.forEach(revokeMessageMedia);
+    setChats([]);
+    setActiveId(null);
+    showToast("Saari chats delete ho gayiin.");
+  };
+
+  const importChats = (list: Chat[]) => {
+    const clean = list.filter(
+      (chat) =>
+        chat &&
+        typeof chat.id === "string" &&
+        typeof chat.title === "string" &&
+        Array.isArray(chat.messages)
+    );
+    if (!clean.length) {
+      showToast("Import ke liye valid chats nahi mile.", "error");
+      return;
+    }
+    setChats((prev) => [...clean, ...prev]);
+    setActiveId(clean[0].id);
+    showToast(`${clean.length} chats import ho gayiin.`);
   };
 
   const stopSpeaking = useCallback(() => {
@@ -247,7 +367,6 @@ export default function ChatMaster() {
     stopSpeaking();
     const clean = text.replace(/[*_`#|>]/g, " ").slice(0, 1000);
 
-    // Browser speech synthesis works without any API key.
     if (!status.voiceOutput && browserCaps.tts && "speechSynthesis" in window) {
       const utterance = new SpeechSynthesisUtterance(clean);
       utterance.lang = /[\u0900-\u097F]/.test(clean)
@@ -328,13 +447,123 @@ export default function ChatMaster() {
     );
   };
 
-  const sendMessage = async (raw?: string, options?: { regenerate?: boolean }) => {
+  const runTool = async (tool: ToolName, args: string): Promise<ToolResult | null> => {
+    try {
+      const response = await fetch("/api/tools", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          tool,
+          input: args,
+          hint: tool === "weather" && !args ? timezoneHint() : "",
+        }),
+      });
+      const data = (await response.json().catch(() => null)) as
+        | { output?: string; error?: string }
+        | null;
+      if (!response.ok || !data?.output) {
+        throw new Error(data?.error ?? "Tool fail ho gaya");
+      }
+      return { name: tool, output: data.output };
+    } catch (error) {
+      showToast((error as Error).message || "Tool fail ho gaya.", "error");
+      return null;
+    }
+  };
+
+  const openStudio = (script = "", prompt = "") => {
+    setStudioScript(script);
+    setStudioPrompt(prompt);
+    setStudioOpen(true);
+  };
+
+  const insertReel = (url: string, fileName: string, script: string) => {
+    let targetId = activeId;
+    if (!targetId) {
+      const chat = createChat();
+      targetId = chat.id;
+      setChats((prev) => [chat, ...prev]);
+      setActiveId(chat.id);
+    }
+    const label = script.split(/\r?\n/).find((line) => line.trim())?.trim() ?? "Nayi reel";
+    const userMessage = makeMessage("user", `🎬 Reel: ${titleFromMessage(label)}`);
+    const assistant = makeMessage("assistant", "🎬 Reel tayyar hai. Download ya dobara banane ke liye Video Studio kholein.", {
+      media: { type: "video", url, prompt: label, fileName },
+    });
+    setChats((prev) =>
+      prev.map((chat) =>
+        chat.id === targetId
+          ? { ...chat, messages: [...chat.messages, userMessage, assistant], updatedAt: Date.now() }
+          : chat
+      )
+    );
+    showToast("Reel chat me add ho gayi.");
+  };
+
+  const sendMessage = async (
+    raw?: string,
+    options?: { regenerate?: boolean; chatId?: string; base?: Message[] }
+  ) => {
     if (isLoading) return;
 
-    let chat = activeChat;
-    let chatId = activeId;
+    let chatId = options?.chatId ?? activeId;
+    let chat = chats.find((item) => item.id === chatId) ?? null;
     const regenerate = options?.regenerate === true;
     let userText = (raw ?? input).trim();
+    let pendingFiles = attachments;
+    let forceSearch = false;
+    let forceMedia: "image" | "video" | null = null;
+
+    // Reel Studio — script + photos se multi-scene video.
+    if (
+      !options?.base &&
+      !regenerate &&
+      /\breel\b/i.test(userText) &&
+      /\b(bana|banayein|banau|banaye|create|make|generate|chahiye|video|scene)\b/i.test(userText)
+    ) {
+      openStudio("", userText);
+      return;
+    }
+
+    // Slash commands that change the request before it is sent.
+    const command = parseCommand(userText);
+    const detectedTool = command ?? detectTool(userText);
+    if (!command && userText.startsWith("/")) {
+      const name = userText.split(/\s+/)[0].toLowerCase();
+      if (name === "/clear") {
+        newChat();
+        return;
+      }
+      if (name === "/help") {
+        setSettingsOpen(true);
+        return;
+      }
+      if (name === "/reel" || name === "/studio") {
+        openStudio(userText.slice(name.length).trim());
+        return;
+      }
+      if (name === "/image" || name === "/video") {
+        const description = userText.slice(name.length).trim();
+        if (name === "/video" && !description) {
+          openStudio();
+          return;
+        }
+        forceMedia = name === "/image" ? "image" : "video";
+        userText = description;
+        if (!userText) {
+          showToast(`${name} ke baad description likhein.`, "error");
+          return;
+        }
+      }
+      if (name === "/search") {
+        forceSearch = true;
+        userText = userText.slice(name.length).trim();
+        if (!userText) {
+          showToast("Search query likhein.", "error");
+          return;
+        }
+      }
+    }
 
     if (!chat) {
       chat = createChat();
@@ -344,7 +573,13 @@ export default function ChatMaster() {
     }
 
     let base: Message[];
-    if (regenerate) {
+    if (options?.base) {
+      base = options.base;
+      const lastUser = [...base].reverse().find((m) => m.role === "user");
+      if (!lastUser) return;
+      userText = lastUser.content;
+      pendingFiles = lastUser.attachments ?? [];
+    } else if (regenerate) {
       let assistantIndex = -1;
       for (let i = chat.messages.length - 1; i >= 0; i--) {
         if (chat.messages[i].role === "assistant") {
@@ -354,28 +589,31 @@ export default function ChatMaster() {
       }
       if (assistantIndex === -1) return;
       const previous = chat.messages[assistantIndex];
-      if (previous.media?.url.startsWith("blob:")) URL.revokeObjectURL(previous.media.url);
+      revokeMessageFiles(previous);
       base = chat.messages.slice(0, assistantIndex);
       const lastUser = [...base].reverse().find((m) => m.role === "user");
       if (!lastUser) return;
       userText = lastUser.content;
+      pendingFiles = lastUser.attachments ?? [];
     } else {
-      if (!userText) return;
-      const userMessage = makeMessage("user", userText);
+      if (!userText && !pendingFiles.length) return;
+      const userMessage = makeMessage("user", userText || "📎 File attached", {
+        attachments: pendingFiles.length ? pendingFiles : undefined,
+      });
       base = [...chat.messages, userMessage];
     }
 
     const lastUserId = [...base].reverse().find((m) => m.role === "user")?.id;
     const assistantMessage = makeMessage("assistant", "");
     const nextMessages = [...base, assistantMessage];
-    const isFirstMessage = !regenerate && chat.messages.length === 0;
+    const isFirstMessage = !regenerate && !options?.base && chat.messages.length === 0;
 
     setChats((prev) =>
       prev.map((c) =>
         c.id === chatId
           ? {
               ...c,
-              title: isFirstMessage ? titleFromMessage(userText) : c.title,
+              title: isFirstMessage ? titleFromMessage(userText || "📎 File") : c.title,
               messages: nextMessages,
               updatedAt: Date.now(),
             }
@@ -383,6 +621,8 @@ export default function ChatMaster() {
       )
     );
     setInput("");
+    setAttachments([]);
+    setShowTools(false);
     setSidebarOpen(false);
     stickToBottom.current = true;
     setIsLoading(true);
@@ -391,10 +631,26 @@ export default function ChatMaster() {
 
     const controller = new AbortController();
     abortRef.current = controller;
+    const finish = () => {
+      abortRef.current = null;
+      setStreamingId(null);
+      setIsLoading(false);
+    };
+
+    // Tool call (calculator, weather, URL reader, …).
+    let toolResults: ToolResult[] = [];
+    if (detectedTool) {
+      const result = await runTool(detectedTool.tool, detectedTool.args);
+      if (result) toolResults = [result];
+      updateAssistant(chatId as string, assistantMessage.id, "", { tools: toolResults });
+    }
 
     // Image / video requests use free generators — no keys needed.
-    const wantsVideo = videoMode || (!imageMode && looksLikeVideoRequest(userText));
-    const wantsImage = !wantsVideo && (imageMode || looksLikeImageRequest(userText));
+    const wantsVideo =
+      forceMedia === "video" || (!forceMedia && !imageMode && looksLikeVideoRequest(userText));
+    const wantsImage =
+      forceMedia === "image" ||
+      (!forceMedia && !wantsVideo && (imageMode || looksLikeImageRequest(userText)));
     if (wantsVideo || wantsImage) {
       let createdUrl: string | null = null;
       try {
@@ -402,9 +658,8 @@ export default function ChatMaster() {
         updateAssistant(
           chatId as string,
           assistantMessage.id,
-          wantsVideo
-            ? "🎬 Pehle ek realistic image ban rahi hai…"
-            : "🎨 Realistic image ban rahi hai…"
+          wantsVideo ? "🎬 Pehle ek realistic image ban rahi hai…" : "🎨 Realistic image ban rahi hai…",
+          { tools: toolResults.length ? toolResults : undefined }
         );
 
         const blob = await fetchImageBlob(cleanPrompt, 768, 768);
@@ -434,10 +689,9 @@ export default function ChatMaster() {
 
         const label = mediaStatusText(userText, wantsVideo);
         updateAssistant(chatId as string, assistantMessage.id, label, { media });
-        if (voiceOn && voiceOutputReady) speakText(label);
+        if (voiceOn) speakText(label);
         setImageMode(false);
         setVideoMode(false);
-        return;
       } catch (error) {
         if (createdUrl) URL.revokeObjectURL(createdUrl);
         setImageMode(false);
@@ -456,15 +710,19 @@ export default function ChatMaster() {
           updateAssistant(chatId as string, assistantMessage.id, `⚠️ ${message}`);
           showToast(message, "error");
         }
-        return;
+      } finally {
+        finish();
       }
+      return;
     }
 
     try {
       // Optional web search — results are injected only into the API payload.
       let searchContext = "";
       let sources: Source[] = [];
-      const shouldSearch = status.search && (webSearch || looksLikeSearch(userText));
+      const shouldSearch =
+        status.search &&
+        (forceSearch || webSearch || (preferences.autoSearch && looksLikeSearch(userText)));
       if (shouldSearch) {
         try {
           const searchRes = await fetch("/api/search", {
@@ -484,7 +742,7 @@ export default function ChatMaster() {
                       ...c,
                       messages: c.messages.map((m) =>
                         m.id === assistantMessage.id
-                          ? { ...m, searched: true, sources }
+                          ? { ...m, searched: true, sources, tools: toolResults.length ? toolResults : undefined }
                           : m.id === lastUserId
                             ? { ...m, searched: true }
                             : m
@@ -502,19 +760,26 @@ export default function ChatMaster() {
       }
 
       const payload = toApiMessages(base);
-      if (searchContext && payload.length) {
+      const contexts: string[] = [];
+      if (searchContext) contexts.push(`[Web search results — use these facts if relevant]\n${searchContext}`);
+      for (const result of toolResults) {
+        contexts.push(`[Tool result: ${result.name}]\n${result.output}`);
+      }
+      if (contexts.length) {
+        const extra = contexts.join("\n\n");
         const last = payload[payload.length - 1];
-        if (last.role === "user") {
-          last.content += `\n\n[Web search results — use these facts if relevant]\n${searchContext}`;
-        } else {
-          payload.push({ role: "user", content: `[Web search results]\n${searchContext}` });
-        }
+        if (last?.role === "user") last.content += `\n\n${extra}`;
+        else payload.push({ role: "user", content: extra });
       }
 
       const response = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ messages: payload }),
+        body: JSON.stringify({
+          messages: payload,
+          system: systemAddition(preferences),
+          temperature: preferences.temperature,
+        }),
         signal: controller.signal,
       });
 
@@ -531,10 +796,10 @@ export default function ChatMaster() {
       const handleBlock = (block: string) => {
         const line = block.split("\n").find((part) => part.trim().startsWith("data: "));
         if (!line) return;
-        const payloadText = line.trim().slice(6);
-        if (payloadText === "[DONE]") return;
+        const frame = line.trim().slice(6);
+        if (frame === "[DONE]") return;
         try {
-          const data = JSON.parse(payloadText) as { text?: string; error?: string };
+          const data = JSON.parse(frame) as { text?: string; error?: string };
           if (typeof data.text === "string") {
             full += data.text;
             updateAssistant(chatId as string, assistantMessage.id, full);
@@ -557,10 +822,10 @@ export default function ChatMaster() {
       }
       if (buffer.trim()) handleBlock(buffer);
 
-      if (!full.trim()) {
+      if (!full.trim() && !toolResults.length) {
         updateAssistant(chatId as string, assistantMessage.id, "⚠️ Jawab nahi mila. Dobara try karein.");
       } else if (voiceOn && voiceOutputReady) {
-        speakText(full);
+        speakText(full || toolResults.map((item) => item.output).join("\n"));
       }
     } catch (error) {
       const aborted = controller.signal.aborted;
@@ -579,13 +844,92 @@ export default function ChatMaster() {
         showToast(message, "error");
       }
     } finally {
-      abortRef.current = null;
-      setStreamingId(null);
-      setIsLoading(false);
+      finish();
     }
   };
 
   const stopGeneration = () => abortRef.current?.abort();
+
+  const addFiles = async (files: FileList | null) => {
+    if (!files?.length) return;
+    const incoming = Array.from(files);
+    setUploading(true);
+    const added: Attachment[] = [];
+    for (const file of incoming) {
+      if (attachments.length + added.length >= MAX_ATTACHMENTS) {
+        showToast(`Maximum ${MAX_ATTACHMENTS} files allow hain.`, "error");
+        break;
+      }
+      if (file.size > MAX_FILE_BYTES) {
+        showToast(`${file.name} bahut bada hai (max 12 MB).`, "error");
+        continue;
+      }
+      try {
+        if (file.type.startsWith("image/")) {
+          added.push({
+            name: file.name,
+            type: file.type,
+            size: file.size,
+            url: URL.createObjectURL(file),
+          });
+        } else if (file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf")) {
+          const form = new FormData();
+          form.append("file", file);
+          const response = await fetch("/api/files", { method: "POST", body: form });
+          const data = (await response.json().catch(() => null)) as {
+            text?: string;
+            pages?: number;
+            error?: string;
+          } | null;
+          if (!response.ok || !data?.text) throw new Error(data?.error ?? "PDF read nahi ho payi");
+          added.push({
+            name: file.name,
+            type: file.type || "application/pdf",
+            size: file.size,
+            text: data.text,
+            pages: data.pages,
+          });
+        } else if (file.type.startsWith("text/") || TEXT_FILE.test(file.name)) {
+          added.push({
+            name: file.name,
+            type: file.type || "text/plain",
+            size: file.size,
+            text: (await file.text()).slice(0, 60000),
+          });
+        } else {
+          added.push({ name: file.name, type: file.type || "application/octet-stream", size: file.size });
+        }
+      } catch (error) {
+        showToast(`${file.name}: ${(error as Error).message}`, "error");
+      }
+    }
+    if (added.length) setAttachments((prev) => [...prev, ...added]);
+    setUploading(false);
+    if (fileRef.current) fileRef.current.value = "";
+    textareaRef.current?.focus();
+  };
+
+  const deleteMessage = (messageId: string) => {
+    setChats((prev) =>
+      prev.map((chat) => {
+        if (chat.id !== activeId) return chat;
+        const target = chat.messages.find((m) => m.id === messageId);
+        if (target) revokeMessageFiles(target);
+        return { ...chat, messages: chat.messages.filter((m) => m.id !== messageId) };
+      })
+    );
+  };
+
+  const editMessage = (index: number, content: string) => {
+    const chat = activeChat;
+    if (!chat) return;
+    const target = chat.messages[index];
+    if (!target || target.role !== "user") return;
+    revokeMessageFiles(target);
+    const base = chat.messages.slice(0, index);
+    base.push({ ...target, content, edited: true });
+    void sendMessage(undefined, { chatId: chat.id, base });
+  };
 
   const stopRecording = () => {
     if (speechModeRef.current === "browser") {
@@ -603,7 +947,6 @@ export default function ChatMaster() {
     const speechWindow = window as SpeechWindow;
     const SpeechCtor = speechWindow.SpeechRecognition || speechWindow.webkitSpeechRecognition;
 
-    // Browser-native speech recognition — no API key needed (Chrome/Edge).
     if (!status.voiceInput && SpeechCtor) {
       try {
         const recognition = new SpeechCtor();
@@ -688,7 +1031,6 @@ export default function ChatMaster() {
   };
 
   const toggleRecording = () => (isRecording ? stopRecording() : void startRecording());
-
   const toggleTheme = () => setTheme((current) => (current === "dark" ? "light" : "dark"));
 
   const toggleVoice = () => {
@@ -696,8 +1038,10 @@ export default function ChatMaster() {
       showToast("Is browser mein voice output available nahi hai.", "error");
       return;
     }
+    const next = !voiceOn;
     if (voiceOn) stopSpeaking();
-    setVoiceOn((on) => !on);
+    setVoiceOn(next);
+    setPreferences((prev) => ({ ...prev, autoSpeak: next }));
   };
 
   const toggleSearch = () => {
@@ -740,6 +1084,9 @@ export default function ChatMaster() {
         }}
         onNew={newChat}
         onDelete={deleteChat}
+        onRename={renameChat}
+        onTogglePin={togglePin}
+        onOpenSettings={() => setSettingsOpen(true)}
         onClose={() => setSidebarOpen(false)}
       />
 
@@ -773,7 +1120,7 @@ export default function ChatMaster() {
             <button
               className={`icon-btn ${webSearch ? "active" : ""}`}
               onClick={toggleSearch}
-              title={status.search ? "Web search toggle" : "TAVILY_API_KEY missing"}
+              title="Web search toggle"
               aria-label="Web search toggle"
               aria-pressed={webSearch}
             >
@@ -787,6 +1134,22 @@ export default function ChatMaster() {
               aria-pressed={voiceOn}
             >
               {voiceOn ? <Volume2 size={18} /> : <VolumeX size={18} />}
+            </button>
+            <button
+              className="icon-btn"
+              onClick={() => openStudio()}
+              title="Reel / Video Studio (/reel)"
+              aria-label="Reel / Video Studio"
+            >
+              <Film size={18} />
+            </button>
+            <button
+              className="icon-btn"
+              onClick={() => setSettingsOpen(true)}
+              title="Settings (Ctrl+,)"
+              aria-label="Settings"
+            >
+              <Settings2 size={18} />
             </button>
             <button className="icon-btn" onClick={newChat} title="Nayi chat" aria-label="Nayi chat">
               <Plus size={19} />
@@ -802,7 +1165,7 @@ export default function ChatMaster() {
               <p>Poocho kuch bhi — Hindi, Urdu ya English mein. Seedha jawab, bina jhanjhat.</p>
               <div className="mode-pill">
                 <span className="mode-dot" />
-                Free mode active — bina kisi paid key ke chal raha hai
+                Chat · Search · Image · Video · Files · Tools — sab free mode me
               </div>
               <div className="suggestions">
                 {SUGGESTIONS.map(({ text, icon: Icon }) => (
@@ -826,7 +1189,12 @@ export default function ChatMaster() {
                   isStreaming={streamingId === message.id}
                   canSpeak={voiceOutputReady}
                   onSpeak={speakText}
-                  onRegenerate={() => void sendMessage(undefined, { regenerate: true })}
+                  onRegenerate={() => {
+                    const base = activeChat.messages.slice(0, index);
+                    if (base.length) void sendMessage(undefined, { chatId: activeChat.id, base });
+                  }}
+                  onEdit={(content) => editMessage(index, content)}
+                  onDelete={() => deleteMessage(message.id)}
                 />
               ))}
             </div>
@@ -834,11 +1202,80 @@ export default function ChatMaster() {
         </div>
 
         <div className="composer-area">
+          {slashMatches.length > 0 && (
+            <div className="command-menu" role="listbox" aria-label="Commands">
+              {slashMatches.map((item) => (
+                <button
+                  key={item.command}
+                  type="button"
+                  onClick={() => {
+                    setInput(`${item.command} `);
+                    textareaRef.current?.focus();
+                  }}
+                >
+                  <strong>{item.command}</strong>
+                  <span>{item.label}</span>
+                  <small>{item.hint}</small>
+                </button>
+              ))}
+            </div>
+          )}
+
+          {showTools && (
+            <div className="tools-menu" role="menu" aria-label="Tools">
+              <div className="tools-menu-title">Tools — command dabao ya click karein</div>
+              <div className="tools-grid">
+                {TOOL_COMMANDS.map((item) => (
+                  <button
+                    key={item.command}
+                    type="button"
+                    title={item.hint}
+                    onClick={() => {
+                      setInput(`${item.command} `);
+                      setShowTools(false);
+                      textareaRef.current?.focus();
+                    }}
+                  >
+                    <Wrench size={14} />
+                    <span>{item.title}</span>
+                    <small>{item.example}</small>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {attachments.length > 0 && (
+            <div className="pending-attachments">
+              {attachments.map((file, index) => (
+                <div key={`${file.name}-${index}`} className="pending-file">
+                  {file.url ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img src={file.url} alt={file.name} />
+                  ) : (
+                    <FileText size={15} />
+                  )}
+                  <span title={file.name}>{file.name}</span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (file.url?.startsWith("blob:")) URL.revokeObjectURL(file.url);
+                      setAttachments((prev) => prev.filter((_, i) => i !== index));
+                    }}
+                    aria-label="Attachment hataayein"
+                  >
+                    ×
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+
           <div className="composer">
             <button
               className={`mode-tool ${imageMode ? "active" : ""}`}
               onClick={toggleImageMode}
-              title="Image banana (ya 'image' likh kar bhejein)"
+              title="Image banana (ya /image likhein)"
               aria-label="Image mode"
               aria-pressed={imageMode}
             >
@@ -847,12 +1284,38 @@ export default function ChatMaster() {
             <button
               className={`mode-tool ${videoMode ? "active" : ""}`}
               onClick={toggleVideoMode}
-              title="Video banana (ya 'video' likh kar bhejein)"
+              title="Video banana (ya /video likhein)"
               aria-label="Video mode"
               aria-pressed={videoMode}
             >
               <Video size={19} />
             </button>
+            <button
+              className={`mode-tool ${showTools ? "active" : ""}`}
+              onClick={() => setShowTools((on) => !on)}
+              title="Tools (calculator, weather, URL reader…)"
+              aria-label="Tools"
+              aria-pressed={showTools}
+            >
+              <Wrench size={18} />
+            </button>
+            <button
+              className="mode-tool"
+              onClick={() => fileRef.current?.click()}
+              title="File attach karein (PDF, text, image)"
+              aria-label="File attach karein"
+              disabled={uploading}
+            >
+              <Paperclip size={18} />
+            </button>
+            <input
+              ref={fileRef}
+              type="file"
+              multiple
+              hidden
+              accept=".pdf,.txt,.md,.csv,.json,.log,.xml,.yaml,.yml,.js,.jsx,.ts,.tsx,.py,.java,.css,.html,.sql,image/*"
+              onChange={(event) => void addFiles(event.target.files)}
+            />
             <button
               className={`mic-btn ${isRecording ? "recording" : ""}`}
               onClick={toggleRecording}
@@ -869,18 +1332,24 @@ export default function ChatMaster() {
               onKeyDown={(event) => {
                 if (event.key === "Enter" && !event.shiftKey) {
                   event.preventDefault();
+                  if (slashMatches.length) {
+                    setInput(`${slashMatches[0].command} `);
+                    return;
+                  }
                   void sendMessage();
                 }
               }}
               rows={1}
               placeholder={
-                isRecording
-                  ? "Sun raha hoon…"
-                  : videoMode
-                    ? "Video ka description likhein…"
-                    : imageMode
-                      ? "Image ka description likhein…"
-                      : "Message likhein…"
+                uploading
+                  ? "File padhi ja rahi hai…"
+                  : isRecording
+                    ? "Sun raha hoon…"
+                    : videoMode
+                      ? "Video ka description likhein…"
+                      : imageMode
+                        ? "Image ka description likhein…"
+                        : "Message likhein… (/ se commands)"
               }
               aria-label="Message"
             />
@@ -892,7 +1361,7 @@ export default function ChatMaster() {
               <button
                 className="send-btn"
                 onClick={() => sendMessage()}
-                disabled={!input.trim()}
+                disabled={!input.trim() && !attachments.length}
                 title="Bhejein (Enter)"
                 aria-label="Message bhejein"
               >
@@ -901,7 +1370,7 @@ export default function ChatMaster() {
             )}
           </div>
           <p className="composer-hint">
-            🖼️ Image · 🎬 Video · Enter = bhejein · Shift+Enter = nayi line{isRecording ? " · 🎙️ recording chal rahi hai" : ""}
+            📎 Files · 🖼️ Image · 🎬 Video · / Commands · Enter = bhejein · Shift+Enter = nayi line
           </p>
         </div>
 
@@ -912,6 +1381,25 @@ export default function ChatMaster() {
           </div>
         )}
       </main>
+
+      <SettingsModal
+        open={settingsOpen}
+        preferences={preferences}
+        chats={chats}
+        onClose={() => setSettingsOpen(false)}
+        onChange={setPreferences}
+        onImport={importChats}
+        onClearAll={clearAllChats}
+      />
+
+      <VideoStudio
+        key={`${studioScript}|${studioPrompt}`}
+        open={studioOpen}
+        initialScript={studioScript}
+        initialPrompt={studioPrompt}
+        onClose={() => setStudioOpen(false)}
+        onInsert={insertReel}
+      />
     </div>
   );
 }

@@ -2,9 +2,21 @@
 
 /* eslint-disable @next/next/no-img-element */
 import { useEffect, useRef, useState } from "react";
-import { Check, Copy, Download, RotateCcw, Sparkles, Volume2 } from "lucide-react";
+import {
+  Check,
+  Copy,
+  Download,
+  FileText,
+  Pencil,
+  RotateCcw,
+  Sparkles,
+  Trash2,
+  Volume2,
+  Wrench,
+  X,
+} from "lucide-react";
 import Markdown from "@/components/Markdown";
-import type { Message } from "@/lib/chat";
+import type { Attachment, Message } from "@/lib/chat";
 
 interface Props {
   message: Message;
@@ -13,6 +25,32 @@ interface Props {
   canSpeak: boolean;
   onSpeak: (text: string) => void;
   onRegenerate: () => void;
+  onEdit: (content: string) => void;
+  onDelete: () => void;
+}
+
+function AttachmentCard({ file }: { file: Attachment }) {
+  if (file.type.startsWith("image/") && file.url) {
+    return (
+      <figure className="attachment-image">
+        <img src={file.url} alt={file.name} />
+        <figcaption>{file.name}</figcaption>
+      </figure>
+    );
+  }
+  return (
+    <div className="attachment-file" title={file.text ? `${file.text.length} characters extracted` : file.name}>
+      <FileText size={15} />
+      <div>
+        <strong>{file.name}</strong>
+        <small>
+          {file.text
+            ? `${file.pages ? `${file.pages} pages · ` : ""}${file.text.length.toLocaleString()} chars`
+            : `${(file.size / 1024).toFixed(0)} KB`}
+        </small>
+      </div>
+    </div>
+  );
 }
 
 export default function MessageBubble({
@@ -22,8 +60,12 @@ export default function MessageBubble({
   canSpeak,
   onSpeak,
   onRegenerate,
+  onEdit,
+  onDelete,
 }: Props) {
   const [copied, setCopied] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(message.content);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => () => {
@@ -45,11 +87,63 @@ export default function MessageBubble({
     return (
       <div className="msg-row msg-user">
         <div className="bubble bubble-user">
-          <p className="whitespace-pre-wrap break-words">{message.content}</p>
-          {message.searched && (
-            <span className="search-chip">🌐 Web search</span>
+          {editing ? (
+            <div className="message-edit">
+              <textarea
+                autoFocus
+                value={draft}
+                onChange={(event) => setDraft(event.target.value)}
+                rows={4}
+                aria-label="Message edit karein"
+              />
+              <div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (draft.trim()) onEdit(draft.trim());
+                    setEditing(false);
+                  }}
+                >
+                  <Check size={13} /> Save & resend
+                </button>
+                <button type="button" onClick={() => setEditing(false)}>
+                  <X size={13} /> Cancel
+                </button>
+              </div>
+            </div>
+          ) : (
+            <>
+              <p className="whitespace-pre-wrap break-words">{message.content}</p>
+              {!!message.attachments?.length && (
+                <div className="attachments">
+                  {message.attachments.map((file, index) => (
+                    <AttachmentCard key={`${file.name}-${index}`} file={file} />
+                  ))}
+                </div>
+              )}
+              {message.searched && <span className="search-chip">🌐 Web search</span>}
+              {message.edited && <span className="search-chip">✏️ Edited</span>}
+            </>
           )}
         </div>
+        {!editing && !isStreaming && (
+          <div className="msg-actions user-actions">
+            <button
+              type="button"
+              onClick={() => {
+                setDraft(message.content);
+                setEditing(true);
+              }}
+              title="Message edit karein"
+              aria-label="Message edit karein"
+            >
+              <Pencil size={13} /> <span>Edit</span>
+            </button>
+            <button type="button" onClick={onDelete} title="Message delete karein" aria-label="Message delete karein">
+              <Trash2 size={13} /> <span>Delete</span>
+            </button>
+          </div>
+        )}
       </div>
     );
   }
@@ -85,6 +179,16 @@ export default function MessageBubble({
                 </a>
               </figcaption>
             </figure>
+          )}
+          {!!message.tools?.length && (
+            <div className="tool-results">
+              {message.tools.map((tool, index) => (
+                <details key={`${tool.name}-${index}`}>
+                  <summary><Wrench size={13} /> {tool.name}</summary>
+                  <div className="tool-output"><Markdown content={tool.output} /></div>
+                </details>
+              ))}
+            </div>
           )}
           {message.content ? (
             <>
@@ -143,6 +247,9 @@ export default function MessageBubble({
                 <span>Regenerate</span>
               </button>
             )}
+            <button type="button" onClick={onDelete} title="Jawab delete karein" aria-label="Jawab delete karein">
+              <Trash2 size={14} /> <span>Delete</span>
+            </button>
           </div>
         )}
       </div>

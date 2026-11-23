@@ -17,6 +17,23 @@ const SYSTEM_PROMPT =
 
 const FREE_CHAT_URL = "https://text.pollinations.ai/";
 
+interface RequestOptions {
+  system: string;
+  temperature: number;
+}
+
+function requestOptions(body: { system?: unknown; temperature?: unknown }): RequestOptions {
+  const extra = typeof body.system === "string" ? body.system.trim().slice(0, 6000) : "";
+  const temperature =
+    typeof body.temperature === "number" && Number.isFinite(body.temperature)
+      ? Math.min(1, Math.max(0, body.temperature))
+      : 0.7;
+  return {
+    system: extra ? `${SYSTEM_PROMPT}\n\n${extra}` : SYSTEM_PROMPT,
+    temperature,
+  };
+}
+
 function normalizeMessages(input: unknown): ApiMessage[] | null {
   if (!Array.isArray(input)) return null;
   const messages = input
@@ -37,11 +54,21 @@ function doneEvent(): Uint8Array {
   return new TextEncoder().encode("data: [DONE]\n\n");
 }
 
-async function anthropicStream(messages: ApiMessage[], signal: AbortSignal) {
+async function anthropicStream(
+  messages: ApiMessage[],
+  signal: AbortSignal,
+  options: RequestOptions
+) {
   try {
     const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
     const stream = await client.messages.stream(
-      { model: chatModel(), max_tokens: 2048, system: SYSTEM_PROMPT, messages },
+      {
+        model: chatModel(),
+        max_tokens: 2048,
+        temperature: options.temperature,
+        system: options.system,
+        messages,
+      },
       { signal }
     );
 
@@ -64,7 +91,7 @@ async function anthropicStream(messages: ApiMessage[], signal: AbortSignal) {
             // seamlessly switch to the free model on this same stream.
             console.warn("Anthropic failed, using free model:", friendlyApiError(error, "unknown"));
             try {
-              const fallback = await freeStream(messages, signal);
+              const fallback = await freeStream(messages, signal, options);
               const reader = fallback.getReader();
               while (true) {
                 const { done, value } = await reader.read();
@@ -96,14 +123,19 @@ async function anthropicStream(messages: ApiMessage[], signal: AbortSignal) {
   }
 }
 
-async function freeStream(messages: ApiMessage[], signal: AbortSignal) {
+async function freeStream(
+  messages: ApiMessage[],
+  signal: AbortSignal,
+  options: RequestOptions
+) {
   const upstream = await fetch(FREE_CHAT_URL, {
     method: "POST",
     headers: { "Content-Type": "application/json", "User-Agent": "Chat-Master/1.0" },
     body: JSON.stringify({
-      messages: [{ role: "system", content: SYSTEM_PROMPT }, ...messages],
+      messages: [{ role: "system", content: options.system }, ...messages],
       stream: true,
       max_tokens: 2048,
+      temperature: options.temperature,
     }),
     signal,
   });
@@ -189,10 +221,11 @@ export async function POST(req: NextRequest) {
     }
 
     const provider = process.env.CHAT_PROVIDER?.trim().toLowerCase() || "auto";
+    const options = requestOptions(body ?? {});
     let stream: ReadableStream<Uint8Array> | null = null;
 
     if (provider !== "free" && hasKey(process.env.ANTHROPIC_API_KEY)) {
-      stream = await anthropicStream(messages, req.signal);
+      stream = await anthropicStream(messages, req.signal, options);
     }
     if (!stream) {
       if (provider === "anthropic") {
@@ -201,7 +234,7 @@ export async function POST(req: NextRequest) {
           { status: 502 }
         );
       }
-      stream = await freeStream(messages, req.signal);
+      stream = await freeStream(messages, req.signal, options);
     }
 
     return new Response(stream, {

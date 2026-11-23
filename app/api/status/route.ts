@@ -13,6 +13,8 @@ export async function GET() {
       video: true,
       voiceInput: hasKey(process.env.OPENAI_API_KEY),
       voiceOutput: hasKey(process.env.CARTESIA_API_KEY),
+      tools: true,
+      files: true,
     },
     { headers: { "Cache-Control": "no-store" } }
   );

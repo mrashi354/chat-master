@@ -19,6 +19,13 @@ voice input/output aur har language mein jawab. Aap jis language mein poochho, u
 - ⌨️ **Shortcuts** — `Enter` bhejein, `Shift+Enter` nayi line, `⌘/Ctrl+K` nayi chat, `Esc` generation rokein
 - 🌗 **Dark / Light theme** — header mein toggle, choice browser mein save
 - 🟢 **Feature status** — jin features ki API key missing hai, unke buttons disabled + tooltip
+- 📎 **File attachments** — PDF (text extraction), TXT/MD/CSV/JSON/code files aur images attach karke un par sawaal; max 5 files, 12 MB each
+- 🧰 **Tools** — calculator, unit converter, live weather (Open-Meteo), web page reader, Wikipedia summary, dictionary aur timezone clock — sab free, bina key ke
+- ⌘ **Slash commands** — `/calc`, `/convert`, `/weather`, `/read`, `/wiki`, `/define`, `/time`, `/reel`, `/image`, `/video`, `/search`, `/clear`, `/help`
+- 🧠 **Presets + memory** — Code mentor, Teacher, Writer, Translator jaise personas, custom instructions aur user facts jo har jawab me context ban jaate hain
+- 🗂️ **Advanced chat management** — search, rename, pin, per-message edit/delete, branching regenerate, JSON export/import
+- ⚙️ **Settings panel** — temperature control, auto-search/auto-voice toggles, data backup aur shortcut guide
+- 🎬 **Reel / Video Studio (`/reel`)** — script ki har line ek scene, apni photos ya auto-generated images, captions, fade/slide transitions, 9:16 / 1:1 / 16:9 format, optional background music, WebM download aur seedha chat me add. Pure browser-side rendering (Chrome/Edge recommended)
 
 ## Setup (pehli baar)
 
@@ -70,20 +77,28 @@ npm run lint     # code check
 
 ```
 app/
-  page.tsx                 → Chat UI (chats, streaming, mic, shortcuts)
-  globals.css              → Dark theme + markdown/code styling
-  api/chat/route.ts        → Claude + free-model fallback (SSE, abort support)
+  page.tsx                 → Chat UI (chats, tools, files, commands, mic, shortcuts)
+  globals.css              → Dark theme + markdown/code/UI styling
+  api/chat/route.ts        → Claude + free-model fallback (SSE, system/temperature, abort)
   api/search/route.ts      → Tavily + free DuckDuckGo/Wikipedia fallback
+  api/image/route.ts       → AI Horde + Pollinations image fallback
+  api/tools/route.ts       → Calculator, converter, weather, URL reader, wiki, dictionary, time
+  api/files/route.ts       → PDF text extraction (unpdf)
   api/transcribe/route.ts  → OpenAI Whisper (server-side, key safe)
   api/voice/route.ts       → Cartesia text-to-speech
-  api/status/route.ts      → Which features have keys configured
+  api/status/route.ts      → Which features are available
 components/
-  Sidebar.tsx              → Chat list / feature status
-  MessageBubble.tsx        → Message actions, sources, streaming state
+  Sidebar.tsx              → Chat search, rename, pin, delete, feature status
+  MessageBubble.tsx        → Edit/delete, attachments, tool results, sources, streaming
   Markdown.tsx             → Markdown + copyable code blocks
+  SettingsModal.tsx        → Presets, memory, behavior, export/import, shortcuts
+  VideoStudio.tsx          → Script-to-reel renderer (canvas + MediaRecorder, music, captions)
 lib/
   chat.ts                  → Types, localStorage persistence, helpers
+  media.ts                 → Image fetch + browser-side video clip
+  preferences.ts           → Presets, memory, temperature, settings storage
   server-config.ts         → Key validation, model config
+  tools.ts                 → Tool/command definitions aur detection
 ```
 
 Chats **sirf is browser ke localStorage** mein rehte hain — koi server DB nahi. Clear karne ke liye

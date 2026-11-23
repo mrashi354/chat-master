@@ -1,4 +1,15 @@
+import type { ToolResult } from "@/lib/tools";
+
 export type Role = "user" | "assistant";
+
+export interface Attachment {
+  name: string;
+  type: string;
+  size: number;
+  text?: string;
+  url?: string;
+  pages?: number;
+}
 
 export interface Source {
   title: string;
@@ -20,6 +31,9 @@ export interface Message {
   searched?: boolean;
   sources?: Source[];
   media?: MediaAsset;
+  attachments?: Attachment[];
+  tools?: ToolResult[];
+  edited?: boolean;
 }
 
 export interface Chat {
@@ -28,6 +42,7 @@ export interface Chat {
   messages: Message[];
   createdAt: number;
   updatedAt: number;
+  pinned?: boolean;
 }
 
 export interface FeatureStatus {
@@ -37,6 +52,8 @@ export interface FeatureStatus {
   video: boolean;
   voiceInput: boolean;
   voiceOutput: boolean;
+  tools: boolean;
+  files: boolean;
 }
 
 export interface StoredState {
@@ -53,6 +70,8 @@ export const EMPTY_STATUS: FeatureStatus = {
   video: true,
   voiceInput: false,
   voiceOutput: false,
+  tools: true,
+  files: true,
 };
 
 export function newId(): string {
@@ -128,9 +147,18 @@ export function saveState(state: StoredState): void {
       ...state,
       chats: state.chats.map((chat) => ({
         ...chat,
-        messages: chat.messages.map((m) =>
-          m.media?.url.startsWith("blob:") ? { ...m, media: undefined } : m
-        ),
+        messages: chat.messages.map((m) => {
+          const attachments = m.attachments?.map((file) => ({
+            ...file,
+            url: file.url?.startsWith("blob:") ? undefined : file.url,
+            text: file.text?.slice(0, 20000),
+          }));
+          return {
+            ...m,
+            media: m.media?.url.startsWith("blob:") ? undefined : m.media,
+            attachments: attachments?.length ? attachments : undefined,
+          };
+        }),
       })),
     };
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify(safe));
@@ -151,9 +179,21 @@ export function looksLikeSearch(text: string): boolean {
 
 export function toApiMessages(messages: Message[]) {
   return messages
-    .filter((m) => m.content.trim().length > 0)
+    .filter((m) => m.content.trim().length > 0 || m.attachments?.length)
     .slice(-40)
-    .map((m) => ({ role: m.role, content: m.content.slice(0, 12000) }));
+    .map((m) => {
+      let content = m.content.slice(0, 12000);
+      for (const file of m.attachments ?? []) {
+        if (file.text) {
+          content += `\n\n[Attached file: ${file.name}${file.pages ? `, ${file.pages} pages` : ""}]\n${file.text.slice(0, 12000)}`;
+        } else if (file.type.startsWith("image/")) {
+          content += `\n\n[Attached image: ${file.name} — no image understanding available in free mode]`;
+        } else {
+          content += `\n\n[Attached file: ${file.name}]`;
+        }
+      }
+      return { role: m.role, content: content.slice(0, 30000) };
+    });
 }
 
 const VIDEO_WORDS = ["video", "vedio", "clip", "animation", "animated", "वीडियो", "विडियो"];
@@ -182,6 +222,9 @@ export function revokeMessageMedia(chat: Chat): void {
     if (message.media?.url.startsWith("blob:")) {
       URL.revokeObjectURL(message.media.url);
     }
+    message.attachments?.forEach((file) => {
+      if (file.url?.startsWith("blob:")) URL.revokeObjectURL(file.url);
+    });
   });
 }
 
