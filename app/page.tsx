@@ -1666,7 +1666,7 @@ export default function ChatMaster() {
             )}
           </div>
           <p className="composer-hint">
-            📎 Files (drag-drop) · 🧰 Toolbox · 🎬 Reel · / Commands · Ctrl+. Toolbox · Enter = bhejein
+            📎 Files (drag-drop) · 🖼️ Edit · 🧰 Toolbox · 🎬 Reel · / Commands · Enter = bhejein
           </p>
         </div>
 

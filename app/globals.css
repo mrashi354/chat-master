@@ -1635,6 +1635,22 @@ a:focus-visible {
 .studio-file-chip { align-self: center; max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-soft); font-size: 10px; }
 .studio-error { margin: 9px 0 0; color: #ff9a9a; font-size: 11px; }
 .studio-settings input[type="range"] { width: 100%; accent-color: var(--accent); }
+
+/* ---------- Photo Editor ---------- */
+.editor-body { grid-template-columns: minmax(0, 1.1fr) minmax(280px, 380px); }
+.editor-tools { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; }
+.editor-tool { padding: 7px 3px; font-size: 10px; }
+.editor-panel { margin-top: 9px; padding: 9px; border: 1px solid var(--border-soft); border-radius: 10px; background: var(--bg-soft); }
+.editor-panel .modal-textarea { margin-bottom: 8px; }
+.editor-layer-selected { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 11px; }
+.editor-range { display: flex; flex-direction: column; gap: 3px; margin-top: 6px; color: var(--text-soft); font-size: 10px; }
+.editor-range input { width: 100%; accent-color: var(--accent); }
+.editor-sliders { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 3px 12px; margin-top: 10px; }
+.editor-stickers { display: flex; flex-wrap: wrap; gap: 5px; }
+.sticker-btn { width: 34px; height: 34px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface-2); font-size: 17px; cursor: pointer; }
+.sticker-btn.active { border-color: var(--accent); background: var(--surface-hover); }
+.editor-canvas-frame { touch-action: none; }
+.editor-canvas-frame canvas { cursor: inherit; }
 .spin { animation: studio-spin 0.9s linear infinite; }
 @keyframes studio-spin { to { transform: rotate(360deg); } }
 
