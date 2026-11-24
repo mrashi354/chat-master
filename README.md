@@ -10,7 +10,8 @@ voice input/output aur har language mein jawab. Aap jis language mein poochho, u
 - 🎙️ **Voice input** — mic dabao, bolo; Chrome/Edge me browser speech, ya `OPENAI_API_KEY` hone pe Whisper
 - 🔊 **Voice output** — browser speaker (kisi key ke bina), ya `CARTESIA_API_KEY` hone pe natural TTS
 - 🌐 **Web search** — free DuckDuckGo/Wikipedia fallback, ya `TAVILY_API_KEY` hone pe Tavily + source links
-- 🖼️ **Realistic image generation** — "ek cute cat ki image banao" likho ya 🖼️/🎬 toggle dabao. Free AI Horde (Realistic Vision model) se photorealistic image; agar busy ho to Pollinations fallback + auto-retry
+- 🧠 **Smart image director** — image command pehle samjha jata hai (Hinglish/Hindi/English), style (photo / cinematic / anime / cartoon / 3D / watercolour / oil / pixel / logo) aur aspect (9:16 reel, 16:9 wide, 4:5 poster, 1:1 square) detect karke clear English prompt banta hai. Anthropic key ho to model "soch kar" prompt likhta hai, nahi to free local director; final prompt chat me `🧠 ...` ke saath dikhayi deta hai
+- 🖼️ **Image generation** — "ek cute cat ki image banao" ya `/image jaisi command likho. Teen free providers (AI Horde, naya Pollinations/Flux, legacy Pollinations) alag quotas ke saath race karte hain — jiska response pehle aaye wahi jeet ta hai. Ab payload me requested prompt nahi — director ka improved prompt jata hai, isliye command zyada sahi follow hoti hai
 - 🎬 **Video generation** — usi realistic image ko browser me 4–5 sec ki smooth animated clip me badalta hai (Chrome/Edge best)
 - 💻 **Code** — kisi bhi language me complete runnable code, fenced blocks + copy button
 - 🧠 **Same-language replies** — Hindi, Hinglish, Urdu, English ya koi bhi language — jawab usi mein

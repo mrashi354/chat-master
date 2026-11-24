@@ -1,4 +1,15 @@
-export async function fetchImageBlob(prompt: string, width = 768, height = 768): Promise<Blob> {
+export interface GeneratedImageResult {
+  blob: Blob;
+  prompt: string;
+  thought: boolean;
+  style: string;
+}
+
+export async function fetchImageBlob(
+  prompt: string,
+  width = 768,
+  height = 768
+): Promise<GeneratedImageResult> {
   const response = await fetch("/api/image", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -8,7 +19,23 @@ export async function fetchImageBlob(prompt: string, width = 768, height = 768):
     const data = await response.json().catch(() => null);
     throw new Error(data?.error ?? "Image generate nahi ho paya");
   }
-  return response.blob();
+
+  const headerPrompt = response.headers.get("X-Image-Prompt");
+  let finalPrompt = prompt;
+  if (headerPrompt) {
+    try {
+      finalPrompt = decodeURIComponent(headerPrompt);
+    } catch {
+      finalPrompt = headerPrompt;
+    }
+  }
+
+  return {
+    blob: await response.blob(),
+    prompt: finalPrompt,
+    thought: response.headers.get("X-Image-Mode") === "thought",
+    style: response.headers.get("X-Image-Style") ?? "detailed",
+  };
 }
 
 function preferredMimeType(): string {

@@ -541,7 +541,7 @@ export default function VideoStudio({
       const created: SceneImage[] = [];
       for (let i = start; i < scenes.length; i++) {
         const prompt = `${theme.trim() || "cinematic photorealistic reel"} — scene ${i + 1}: ${scenes[i]}`;
-        const blob = await fetchImageBlob(prompt, 768, 768);
+        const { blob } = await fetchImageBlob(prompt, 768, 768);
         created.push({
           id: `gen-${Date.now()}-${i}`,
           name: `scene-${i + 1}.jpg`,

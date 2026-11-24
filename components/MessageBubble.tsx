@@ -174,7 +174,7 @@ export default function MessageBubble({
             <figure className="media-card">
               <img src={message.media.url} alt={message.media.prompt} />
               <figcaption>
-                <span title={message.media.prompt}>{message.media.prompt}</span>
+                <span title={message.media.prompt}>🧠 {message.media.prompt}</span>
                 <a
                   href={message.media.url}
                   download={message.media.fileName ?? "chat-master-image.webp"}
@@ -188,7 +188,7 @@ export default function MessageBubble({
             <figure className="media-card">
               <video src={message.media.url} controls playsInline />
               <figcaption>
-                <span title={message.media.prompt}>{message.media.prompt}</span>
+                <span title={message.media.prompt}>🧠 {message.media.prompt}</span>
                 <a href={message.media.url} download="chat-master-video.webm">
                   <Download size={13} /> Download
                 </a>

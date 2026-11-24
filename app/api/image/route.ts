@@ -1,14 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
+import { planImage } from "@/lib/image-director";
 
 const HORDE_URL = "https://aihorde.net/api/v2";
 const POLLINATIONS_URL = "https://image.pollinations.ai/prompt/";
+const GEN_POLLINATIONS_URL = "https://gen.pollinations.ai/image/";
+const GEN_MODEL = "black-forest-labs/flux.1-schnell";
 const ANONYMOUS_KEY = "0000000000";
 
 // Realistic-first model list. AI Horde routes to whichever worker has one of these.
 const HORDE_MODELS = ["Realistic Vision", "Deliberate", "stable_diffusion"];
-const NEGATIVE_PROMPT =
-  "cartoon, anime, illustration, painting, drawing, sketch, 3d render, lowres, " +
-  "blurry, distorted, deformed, bad anatomy, extra fingers, watermark, text";
 
 type GeneratedImage = { bytes: ArrayBuffer; contentType: string };
 
@@ -18,17 +18,6 @@ function hordeHeaders(): Record<string, string> {
     "Content-Type": "application/json",
     "Client-Agent": "Chat-Master:1.0:local",
   };
-}
-
-function realisticPrompt(prompt: string): string {
-  if (/\b(cartoon|anime|illustration|painting|drawing|sketch|pixel art|3d render)\b/i.test(prompt)) {
-    return prompt;
-  }
-  if (/photorealistic|photo-realistic/i.test(prompt)) return prompt;
-  return (
-    `${prompt}, photorealistic, highly detailed, natural lighting, sharp focus, ` +
-    `realistic textures, professional photography, 8k`
-  );
 }
 
 function wait(ms: number, signal: AbortSignal): Promise<void> {
@@ -68,7 +57,13 @@ function delayedStart<T>(factory: () => Promise<T>, ms: number, signal: AbortSig
   });
 }
 
-async function generateWithHorde(prompt: string, signal: AbortSignal): Promise<GeneratedImage> {
+async function generateWithHorde(
+  prompt: string,
+  negativePrompt: string,
+  width: number,
+  height: number,
+  signal: AbortSignal
+): Promise<GeneratedImage> {
   const headers = hordeHeaders();
   const submit = await fetch(`${HORDE_URL}/generate/async`, {
     method: "POST",
@@ -78,13 +73,13 @@ async function generateWithHorde(prompt: string, signal: AbortSignal): Promise<G
       prompt,
       models: HORDE_MODELS,
       params: {
-        width: 512,
-        height: 512,
+        width,
+        height,
         steps: 28,
         cfg_scale: 7,
         karras: true,
         sampler_name: "k_euler_a",
-        negative_prompt: NEGATIVE_PROMPT,
+        negative_prompt: negativePrompt,
         n: 1,
       },
       r2: true,
@@ -132,12 +127,16 @@ async function generateWithHorde(prompt: string, signal: AbortSignal): Promise<G
 
 async function generateWithPollinations(
   prompt: string,
+  width: number,
+  height: number,
   signal: AbortSignal
 ): Promise<GeneratedImage> {
   // Fail fast — Horde is racing in parallel, so long waits only add latency.
   for (let attempt = 0; attempt < 2; attempt++) {
     const seed = Math.floor(Math.random() * 1_000_000_000);
-    const url = `${POLLINATIONS_URL}${encodeURIComponent(prompt)}?nologo=true&seed=${seed}`;
+    const url =
+      `${POLLINATIONS_URL}${encodeURIComponent(prompt)}` +
+      `?nologo=true&seed=${seed}&width=${width}&height=${height}`;
     const response = await fetch(url, {
       headers: { "User-Agent": "Chat-Master/1.0" },
       signal,
@@ -161,30 +160,99 @@ async function generateWithPollinations(
   throw new Error("Image service busy — thoda wait karke dobara try karein.");
 }
 
+async function generateWithGenPollinations(
+  prompt: string,
+  width: number,
+  height: number,
+  signal: AbortSignal
+): Promise<GeneratedImage> {
+  // Newer Pollinations image endpoint — separate free quota from the legacy URL.
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const seed = Math.floor(Math.random() * 1_000_000_000);
+    const url =
+      `${GEN_POLLINATIONS_URL}${encodeURIComponent(prompt)}` +
+      `?model=${encodeURIComponent(GEN_MODEL)}&nologo=true&seed=${seed}&width=${width}&height=${height}`;
+    const response = await fetch(url, {
+      headers: { "User-Agent": "Chat-Master/1.0" },
+      signal,
+    });
+
+    if (response.ok) {
+      const contentType = response.headers.get("content-type") || "image/jpeg";
+      if (!contentType.startsWith("image/")) throw new Error("Image response invalid tha.");
+      return { bytes: await response.arrayBuffer(), contentType };
+    }
+
+    if ((response.status === 402 || response.status === 429) && attempt < 1) {
+      await response.arrayBuffer().catch(() => undefined);
+      const retryAfter = Number(response.headers.get("retry-after")) || 3;
+      await wait(Math.min(retryAfter, 4) * 1000, signal);
+      continue;
+    }
+
+    throw new Error(`Gen Pollinations busy (${response.status}).`);
+  }
+  throw new Error("Gen Pollinations busy — thoda wait karke dobara try karein.");
+}
+
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json().catch(() => null);
     const rawPrompt = typeof body?.prompt === "string" ? body.prompt.trim().slice(0, 1000) : "";
     if (!rawPrompt) return NextResponse.json({ error: "prompt required" }, { status: 400 });
 
-    const prompt = realisticPrompt(rawPrompt);
+    const requestedWidth = Number(body?.width);
+    const requestedHeight = Number(body?.height);
+    const plan = await planImage(
+      rawPrompt,
+      {
+        width: Number.isFinite(requestedWidth) ? requestedWidth : undefined,
+        height: Number.isFinite(requestedHeight) ? requestedHeight : undefined,
+        think: body?.think !== false,
+      },
+      req.signal
+    );
+    if (req.signal.aborted) return new Response(null, { status: 499 });
+
+    if (body?.planOnly === true) {
+      return NextResponse.json({
+        prompt: plan.prompt,
+        negativePrompt: plan.negativePrompt,
+        width: plan.width,
+        height: plan.height,
+        style: plan.style,
+        thought: plan.thought,
+      });
+    }
+
     let result: GeneratedImage;
     let provider: string;
 
-    // Race both free providers: Horde starts now, Pollinations joins after 6s.
-    // Winner wins; the slower request is aborted to avoid wasting work.
+    // Race three free providers with separate quotas. Winner wins; the slower
+    // requests are aborted so a busy service never holds the response back.
     const race = new AbortController();
     const forwardAbort = () => race.abort();
     req.signal.addEventListener("abort", forwardAbort, { once: true });
     try {
-      const horde = generateWithHorde(prompt, race.signal).then((bytes) => ({ bytes, provider: "horde" }));
+      const horde = generateWithHorde(
+        plan.prompt,
+        plan.negativePrompt,
+        plan.width,
+        plan.height,
+        race.signal
+      ).then((bytes) => ({ bytes, provider: "horde" }));
+      const genPollinations = delayedStart(
+        () => generateWithGenPollinations(plan.prompt, plan.width, plan.height, race.signal),
+        1500,
+        race.signal
+      ).then((bytes) => ({ bytes, provider: "gen-pollinations" }));
       const pollinations = delayedStart(
-        () => generateWithPollinations(prompt, race.signal),
+        () => generateWithPollinations(plan.prompt, plan.width, plan.height, race.signal),
         6000,
         race.signal
       ).then((bytes) => ({ bytes, provider: "pollinations" }));
 
-      const winner = await Promise.any([horde, pollinations]);
+      const winner = await Promise.any([horde, genPollinations, pollinations]);
       race.abort();
       result = winner.bytes;
       provider = winner.provider;
@@ -200,6 +268,11 @@ export async function POST(req: NextRequest) {
         "Content-Type": result.contentType,
         "Cache-Control": "no-store",
         "X-Image-Provider": provider,
+        "X-Image-Mode": plan.thought ? "thought" : "local",
+        "X-Image-Style": plan.style,
+        "X-Image-Size": `${plan.width}x${plan.height}`,
+        "X-Image-Prompt": encodeURIComponent(plan.prompt),
+        "X-Image-Negative": encodeURIComponent(plan.negativePrompt),
       },
     });
   } catch (error) {

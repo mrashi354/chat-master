@@ -914,11 +914,12 @@ export default function ChatMaster() {
         updateAssistant(
           chatId as string,
           assistantMessage.id,
-          wantsVideo ? "🎬 Pehle ek realistic image ban rahi hai…" : "🎨 Realistic image ban rahi hai…",
+          wantsVideo ? "🧠 Soch kar image bana rahi hai…" : "🧠 Command samajh kar image bana raha hoon…",
           { tools: toolResults.length ? toolResults : undefined }
         );
 
-        const blob = await fetchImageBlob(cleanPrompt, 768, 768);
+        const generated = await fetchImageBlob(cleanPrompt, 768, 768);
+        const blob = generated.blob;
         if (controller.signal.aborted) throw new Error("Aborted");
 
         const imageExt = blob.type.includes("webp")
@@ -929,7 +930,7 @@ export default function ChatMaster() {
         let media: MediaAsset = {
           type: wantsVideo ? "video" : "image",
           url: URL.createObjectURL(blob),
-          prompt: cleanPrompt,
+          prompt: generated.prompt,
           fileName: wantsVideo ? "chat-master-video.webm" : `chat-master-image.${imageExt}`,
         };
         createdUrl = media.url;
@@ -943,7 +944,7 @@ export default function ChatMaster() {
           media = { ...media, url: createdUrl };
         }
 
-        const label = mediaStatusText(userText, wantsVideo);
+        const label = `${generated.thought ? "🧠 " : ""}${mediaStatusText(userText, wantsVideo)}`;
         updateAssistant(chatId as string, assistantMessage.id, label, { media });
         if (voiceOn) speakText(label);
         setImageMode(false);
