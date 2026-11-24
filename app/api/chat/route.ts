@@ -157,10 +157,15 @@ async function freeStream(
     });
 
   let upstream = await request();
-  if ((upstream.status === 402 || upstream.status === 429) && !signal.aborted) {
-    const retrySeconds = Number(upstream.headers.get("retry-after")) || 45;
+  if (upstream.status === 402) {
+    // Quota/payment issues never fix themselves in 20s — fail fast with a clear hint.
     await upstream.body?.cancel().catch(() => undefined);
-    await waitWithAbort(Math.min(retrySeconds * 1000, 20000), signal);
+    throw new Error("Free provider quota khatam (402).");
+  }
+  if (upstream.status === 429 && !signal.aborted) {
+    const retrySeconds = Number(upstream.headers.get("retry-after")) || 5;
+    await upstream.body?.cancel().catch(() => undefined);
+    await waitWithAbort(Math.min(retrySeconds * 1000, 6000), signal);
     upstream = await request();
   }
 

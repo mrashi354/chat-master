@@ -58,8 +58,9 @@ Koi key na ho to bhi app **poor tarah kaam karta hai**:
 - **Chat**: free anonymous model (Pollinations) — streaming ke saath
 - **Search**: DuckDuckGo instant answers + Wikipedia summary
 - **Mic / Speaker**: browser ke built-in speech APIs (Chrome/Edge best)
-- **Image**: free AI Horde — `Realistic Vision` model, photorealistic prompts + negative prompt; busy hone pe Pollinations fallback ke saath retry
+- **Image**: free AI Horde — `Realistic Vision` model, photorealistic prompts + negative prompt; **Pollinations fallback race** (6s baad start) ke saath jo pehle aaye wahi use hota hai, slower request abort
 - **Video**: generated realistic image → browser me smooth canvas animation → WebM clip (Chrome/Edge)
+- **Speed**: tool aur web search **parallel** chalte hain; free model par 402/quota turant clear message deta hai (20s bekaar wait nahi); Horde polling 1.2s aur 60s cap
 - **Optional** `AI_HORDE_API_KEY` se image queue mein priority milta hai (bina key ke bhi kaam karta hai)
 
 Keys sirf **upgrade** ke liye hain — behtar quality aur speed. `CHAT_PROVIDER=auto` default hai:
@@ -73,9 +74,11 @@ Free model rate-limited hota hai (lagbhag ek request har 45 sec per IP), isliye 
 ```bash
 npm run dev      # development — http://localhost:3000
 npm run build    # production build
-npm start        # production server
+npm start        # production server — sabse fast (ab yahi chal raha hai)
 npm run lint     # code check
 ```
+
+💡 **Fastest experience** ke liye `npm run build` ke baad `npm start` use karein — dev mode me har request par compile hota hai, production me nahi.
 
 ## Project structure
 

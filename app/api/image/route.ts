@@ -49,6 +49,25 @@ function wait(ms: number, signal: AbortSignal): Promise<void> {
   });
 }
 
+/** Start a fallback only after `ms`, unless the caller aborts first. */
+function delayedStart<T>(factory: () => Promise<T>, ms: number, signal: AbortSignal): Promise<T> {
+  return new Promise((resolve, reject) => {
+    if (signal.aborted) {
+      reject(new DOMException("Aborted", "AbortError"));
+      return;
+    }
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(new DOMException("Aborted", "AbortError"));
+    };
+    const timer = setTimeout(() => {
+      signal.removeEventListener("abort", onAbort);
+      factory().then(resolve, reject);
+    }, ms);
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
+}
+
 async function generateWithHorde(prompt: string, signal: AbortSignal): Promise<GeneratedImage> {
   const headers = hordeHeaders();
   const submit = await fetch(`${HORDE_URL}/generate/async`, {
@@ -79,10 +98,11 @@ async function generateWithHorde(prompt: string, signal: AbortSignal): Promise<G
   const job = (await submit.json().catch(() => null)) as { id?: string } | null;
   if (!job?.id) throw new Error("AI Horde job nahi mila.");
 
-  const deadline = Date.now() + 150_000;
+  // Short leash — the parallel Pollinations fallback usually answers sooner.
+  const deadline = Date.now() + 60_000;
   let done = false;
   while (Date.now() < deadline) {
-    await wait(2500, signal);
+    await wait(1200, signal);
     const check = await fetch(`${HORDE_URL}/generate/check/${job.id}`, { headers, signal });
     if (!check.ok) throw new Error(`AI Horde check ${check.status}`);
     const status = (await check.json().catch(() => null)) as { done?: boolean } | null;
@@ -114,8 +134,8 @@ async function generateWithPollinations(
   prompt: string,
   signal: AbortSignal
 ): Promise<GeneratedImage> {
-  // Anonymous tier is rate-limited (~45s). Retry using the server's Retry-After hint.
-  for (let attempt = 0; attempt < 3; attempt++) {
+  // Fail fast — Horde is racing in parallel, so long waits only add latency.
+  for (let attempt = 0; attempt < 2; attempt++) {
     const seed = Math.floor(Math.random() * 1_000_000_000);
     const url = `${POLLINATIONS_URL}${encodeURIComponent(prompt)}?nologo=true&seed=${seed}`;
     const response = await fetch(url, {
@@ -129,10 +149,10 @@ async function generateWithPollinations(
       return { bytes: await response.arrayBuffer(), contentType };
     }
 
-    if ((response.status === 402 || response.status === 429) && attempt < 2) {
+    if ((response.status === 402 || response.status === 429) && attempt < 1) {
       await response.arrayBuffer().catch(() => undefined);
-      const retryAfter = Number(response.headers.get("retry-after")) || 45;
-      await wait(Math.min(retryAfter, 60) * 1000, signal);
+      const retryAfter = Number(response.headers.get("retry-after")) || 5;
+      await wait(Math.min(retryAfter, 5) * 1000, signal);
       continue;
     }
 
@@ -149,15 +169,30 @@ export async function POST(req: NextRequest) {
 
     const prompt = realisticPrompt(rawPrompt);
     let result: GeneratedImage;
-    let provider = "horde";
+    let provider: string;
 
+    // Race both free providers: Horde starts now, Pollinations joins after 6s.
+    // Winner wins; the slower request is aborted to avoid wasting work.
+    const race = new AbortController();
+    const forwardAbort = () => race.abort();
+    req.signal.addEventListener("abort", forwardAbort, { once: true });
     try {
-      result = await generateWithHorde(prompt, req.signal);
-    } catch (error) {
-      if (req.signal.aborted) throw error;
-      console.warn("AI Horde failed, using Pollinations:", error);
-      provider = "pollinations";
-      result = await generateWithPollinations(prompt, req.signal);
+      const horde = generateWithHorde(prompt, race.signal).then((bytes) => ({ bytes, provider: "horde" }));
+      const pollinations = delayedStart(
+        () => generateWithPollinations(prompt, race.signal),
+        6000,
+        race.signal
+      ).then((bytes) => ({ bytes, provider: "pollinations" }));
+
+      const winner = await Promise.any([horde, pollinations]);
+      race.abort();
+      result = winner.bytes;
+      provider = winner.provider;
+    } catch {
+      if (req.signal.aborted) throw new DOMException("Aborted", "AbortError");
+      throw new Error("Dono free image services busy hain — thodi der baad try karein.");
+    } finally {
+      req.signal.removeEventListener("abort", forwardAbort);
     }
 
     return new NextResponse(result.bytes, {

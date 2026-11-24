@@ -743,20 +743,71 @@ export default function ChatMaster() {
       setIsLoading(false);
     };
 
-    // Tool call (calculator, weather, URL reader, …).
-    let toolResults: ToolResult[] = [];
-    if (effectiveTool) {
-      const result = await runTool(effectiveTool.tool, effectiveTool.args);
-      if (result) toolResults = [result];
-      updateAssistant(chatId as string, assistantMessage.id, "", { tools: toolResults });
-    }
-
     // Image / video requests use free generators — no keys needed.
     const wantsVideo =
       forceMedia === "video" || (!forceMedia && !imageMode && looksLikeVideoRequest(userText));
     const wantsImage =
       forceMedia === "image" ||
       (!forceMedia && !wantsVideo && (imageMode || looksLikeImageRequest(userText)));
+
+    // Tool + web search run in parallel so the chat request can start sooner.
+    let toolResults: ToolResult[] = [];
+    let searchContext = "";
+    const shouldSearch =
+      !wantsVideo &&
+      !wantsImage &&
+      status.search &&
+      (forceSearch || webSearch || (preferences.autoSearch && looksLikeSearch(userText)));
+
+    const searchTask = shouldSearch
+      ? (async () => {
+          try {
+            const searchRes = await fetch("/api/search", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ query: userText }),
+              signal: controller.signal,
+            });
+            const data = await searchRes.json().catch(() => null);
+            if (!searchRes.ok) {
+              showToast(data?.error ?? "Search fail ho gaya.", "error");
+              return null;
+            }
+            const context = typeof data?.context === "string" ? data.context : "";
+            const found: Source[] = Array.isArray(data?.sources) ? data.sources : [];
+            setChats((prev) =>
+              prev.map((c) =>
+                c.id === chatId
+                  ? {
+                      ...c,
+                      messages: c.messages.map((m) =>
+                        m.id === assistantMessage.id
+                          ? { ...m, searched: true, sources: found }
+                          : m.id === lastUserId
+                            ? { ...m, searched: true }
+                            : m
+                      ),
+                    }
+                  : c
+              )
+            );
+            return { context, sources: found };
+          } catch {
+            if (!controller.signal.aborted) showToast("Search available nahi hai.", "error");
+            return null;
+          }
+        })()
+      : Promise.resolve(null);
+
+    const [toolResult, searchData] = await Promise.all([
+      effectiveTool ? runTool(effectiveTool.tool, effectiveTool.args) : Promise.resolve(null),
+      searchTask,
+    ]);
+    if (toolResult) {
+      toolResults = [toolResult];
+      updateAssistant(chatId as string, assistantMessage.id, "", { tools: toolResults });
+    }
+    if (searchData) searchContext = searchData.context;
     if (wantsVideo || wantsImage) {
       let createdUrl: string | null = null;
       try {
@@ -823,48 +874,6 @@ export default function ChatMaster() {
     }
 
     try {
-      // Optional web search — results are injected only into the API payload.
-      let searchContext = "";
-      let sources: Source[] = [];
-      const shouldSearch =
-        status.search &&
-        (forceSearch || webSearch || (preferences.autoSearch && looksLikeSearch(userText)));
-      if (shouldSearch) {
-        try {
-          const searchRes = await fetch("/api/search", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ query: userText }),
-            signal: controller.signal,
-          });
-          const data = await searchRes.json().catch(() => null);
-          if (searchRes.ok) {
-            searchContext = typeof data?.context === "string" ? data.context : "";
-            sources = Array.isArray(data?.sources) ? data.sources : [];
-            setChats((prev) =>
-              prev.map((c) =>
-                c.id === chatId
-                  ? {
-                      ...c,
-                      messages: c.messages.map((m) =>
-                        m.id === assistantMessage.id
-                          ? { ...m, searched: true, sources, tools: toolResults.length ? toolResults : undefined }
-                          : m.id === lastUserId
-                            ? { ...m, searched: true }
-                            : m
-                      ),
-                    }
-                  : c
-              )
-            );
-          } else {
-            showToast(data?.error ?? "Search fail ho gaya.", "error");
-          }
-        } catch {
-          if (!controller.signal.aborted) showToast("Search available nahi hai.", "error");
-        }
-      }
-
       const payload = toApiMessages(base);
       const contexts: string[] = [];
       if (searchContext) contexts.push(`[Web search results — use these facts if relevant]\n${searchContext}`);
