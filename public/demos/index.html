@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="hi">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Chat-Master — Image & Reel Demo</title>
+  <style>
+    :root { color-scheme: dark; --bg:#0b0e14; --card:#141925; --line:#273044; --text:#e8edf7; --dim:#9aa6bd; --accent:#8b7cff; --ok:#39d98a; }
+    * { box-sizing:border-box; }
+    body { margin:0; background:radial-gradient(1100px 600px at 20% -10%,#262052 0,transparent 55%),var(--bg); color:var(--text); font:15px/1.55 system-ui,-apple-system,"Segoe UI",sans-serif; }
+    header { padding:38px 24px 18px; max-width:1180px; margin:auto; }
+    h1 { font-size:30px; margin:0 0 8px; }
+    .sub { color:var(--dim); max-width:760px; }
+    main { max-width:1180px; margin:auto; padding:0 24px 60px; }
+    h2 { margin:34px 0 14px; font-size:20px; }
+    .grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(280px,1fr)); gap:16px; }
+    .card { background:var(--card); border:1px solid var(--line); border-radius:14px; overflow:hidden; box-shadow:0 12px 30px rgba(0,0,0,.25); }
+    .card img,.card video { width:100%; display:block; background:#000; }
+    .card video { max-height:420px; object-fit:contain; }
+    .body { padding:13px; }
+    .name { font-weight:700; margin-bottom:7px; }
+    .meta { font-size:12px; color:var(--dim); display:flex; flex-wrap:wrap; gap:6px; margin-bottom:9px; }
+    .badge { border:1px solid var(--line); border-radius:999px; padding:2px 8px; }
+    .prompt { font-size:12px; color:#c6d0e5; max-height:76px; overflow:auto; white-space:pre-wrap; }
+    a { color:#b9adff; }
+    table { width:100%; border-collapse:collapse; background:var(--card); border:1px solid var(--line); border-radius:12px; overflow:hidden; }
+    td,th { padding:10px 12px; border-bottom:1px solid var(--line); text-align:left; font-size:13px; }
+    th { color:var(--dim); font-weight:600; }
+    .yes { color:var(--ok); font-weight:700; }
+    .note { margin-top:14px; padding:13px 15px; border-left:3px solid var(--accent); background:rgba(139,124,255,.08); border-radius:0 10px 10px 0; color:var(--dim); font-size:13px; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Chat-Master — live capability audit</h1>
+    <p class="sub">Yahin par app ne 4 alag image prompts aur 2 alag reel styles banayein. Neeche asli prompts, provider aur video metadata hai. Ye demo free providers se bana hai, isliye kisi bhi ek provider ke busy hone par retry laga sakta hai.</p>
+  </header>
+
+  <main>
+    <h2>1. Audit — kya kya chal raha hai?</h2>
+    <table>
+      <tr><th>Capability</th><th>Result</th><th>Evidence</th></tr>
+      <tr><td>Chat streaming (ChatGPT/Claude jaisa flow)</td><td class="yes">PASS</td><td><code>/api/chat</code> SSE chunks: <code>2 + 2 = 4 🚀</code>, Hinglish me</td></tr>
+      <tr><td>Smart image director</td><td class="yes">PASS</td><td>Hinglish → English, style + aspect detection, dynamic negative prompt</td></tr>
+      <tr><td>Image generation — multiple styles</td><td class="yes">PASS</td><td>4 files: cinematic photo, anime, cartoon, logo</td></tr>
+      <tr><td>Reel / video generation — multiple styles</td><td class="yes">PASS</td><td>2 WebM files: 9:16 cinematic + 1:1 clean, finite duration</td></tr>
+      <tr><td>Toolbox + HTML live preview + photo editor</td><td class="yes">PASS</td><td>7/7 browser suites, <code>BROWSER_ERRORS=0</code></td></tr>
+      <tr><td>Exact ChatGPT / Claude / Google Flow quality</td><td>NO — honest limit</td><td>Free providers hain; paid vision/video models nahi. Quality aur reliability paid models se kam ho sakti hai.</td></tr>
+    </table>
+
+    <div class="note">
+      <strong>Simple baat:</strong> app unka <em>kaam</em> karta hai — chat, tools, image prompt samajhna, photo edit, script → reel — lekin unke paid models ka exact output/quality free API se nahi milta. Voice input/output browser APIs par depend hai aur free image providers kabhi-kabhi rate-limit ho jate hain.
+    </div>
+
+    <h2>2. Images — alag-alag styles</h2>
+    <div class="grid" id="images"></div>
+
+    <h2>3. Videos — alag-alag reel tricks</h2>
+    <div class="grid" id="videos"></div>
+  </main>
+
+  <script>
+    const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
+    const badge = (s) => `<span class="badge">${esc(s)}</span>`;
+
+    async function load() {
+      const [images, videos] = await Promise.all([
+        fetch('images.json').then((r) => r.json()).catch(() => []),
+        fetch('videos.json').then((r) => r.json()).catch(() => []),
+      ]);
+
+      document.getElementById('images').innerHTML = images.map((i) => `
+        <article class="card">
+          <a href="${esc(i.file)}" target="_blank"><img src="${esc(i.file)}" alt="${esc(i.style)}" loading="lazy" /></a>
+          <div class="body">
+            <div class="name">${esc(i.file)}</div>
+            <div class="meta">${badge(i.style)} ${badge(i.size)} ${badge(i.provider)} ${badge(i.mode)} ${badge(Math.round(i.bytes / 1024) + ' KB')}</div>
+            <div class="prompt">🧠 ${esc(i.prompt)}</div>
+          </div>
+        </article>`).join('') || '<p>No images yet.</p>';
+
+      document.getElementById('videos').innerHTML = videos.map((v) => `
+        <article class="card">
+          <video src="${esc(v.file)}" controls playsInline loop></video>
+          <div class="body">
+            <div class="name">${esc(v.label)}</div>
+            <div class="meta">${badge(v.format)} ${badge(v.motion)} ${badge(v.transition)} ${badge(v.duration + 's')} ${badge(v.w + '×' + v.h)} ${badge(Math.round(v.bytes / 1024) + ' KB')}</div>
+            <div class="prompt">${esc(v.script.replace(/\n/g, ' · '))}</div>
+          </div>
+        </article>`).join('') || '<p>No videos yet.</p>';
+    }
+    load();
+  </script>
+</body>
+</html>

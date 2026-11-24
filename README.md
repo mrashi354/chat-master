@@ -1,5 +1,7 @@
 # 🤖 Chat-Master — Your Own ChatGPT
 
+> 🖼️ **Live demo gallery:** `http://localhost:3000/demos/index.html` — 4 alag image styles aur 2 alag reel videos, asli prompts/metadata ke saath.
+
 ChatGPT jaisa AI assistant — streaming chat, live search, image/video banane, code likhne,
 voice input/output aur har language mein jawab. Aap jis language mein poochho, usi mein jawab milta hai.
 

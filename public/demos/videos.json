@@ -1,0 +1,43 @@
+[
+  {
+    "file": "cinematic-reel.webm",
+    "label": "Cinematic 9:16 reel",
+    "script": "Toofan me bhi roshni\nSamundar garaajta hai\nEk diya babelta hai",
+    "photos": [
+      "01-cinematic.jpg",
+      "02-anime.jpg",
+      "03-cartoon.jpg"
+    ],
+    "format": "9:16",
+    "motion": "dramatic",
+    "transition": "zoom",
+    "sceneTime": "2",
+    "captions": true,
+    "duration": 6,
+    "w": 540,
+    "h": 960,
+    "error": null,
+    "bytes": 214718,
+    "errors": 0
+  },
+  {
+    "file": "clean-story.webm",
+    "label": "Clean 1:1 story",
+    "script": "Chhoti si khushi\nRoz naye rang\nAur ek naya safar",
+    "photos": [
+      "02-anime.jpg",
+      "03-cartoon.jpg"
+    ],
+    "format": "1:1",
+    "motion": "soft",
+    "transition": "fade",
+    "sceneTime": "3",
+    "captions": false,
+    "duration": 9,
+    "w": 720,
+    "h": 720,
+    "error": null,
+    "bytes": 517826,
+    "errors": 0
+  }
+]

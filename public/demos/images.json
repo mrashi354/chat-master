@@ -1,0 +1,46 @@
+[
+  {
+    "file": "01-cinematic.jpg",
+    "command": "cinematic photorealistic old lighthouse in a storm, dramatic waves, dark clouds, 16:9",
+    "prompt": "cinematic photorealistic old lighthouse in a storm, dramatic waves, dark clouds, cinematic still, dramatic rim lighting, anamorphic lens, film grain, colour graded, shallow depth of field, photorealistic, professional photography, natural lighting, sharp focus, realistic textures, shallow depth of field, wide landscape composition",
+    "provider": "pollinations",
+    "mode": "local",
+    "style": "cinematic+photo",
+    "size": "1024x576",
+    "bytes": 76408,
+    "contentType": "image/jpeg"
+  },
+  {
+    "file": "02-anime.jpg",
+    "command": "anime young woman with silver hair in a cherry blossom garden, soft sunset, highly detailed, 9:16",
+    "prompt": "anime young woman with silver hair in a cherry blossom garden, soft sunset, highly detailed, anime style, cel shading, vibrant colours, expressive eyes, detailed anime background, studio quality, vertical portrait composition",
+    "provider": "pollinations",
+    "mode": "local",
+    "style": "anime",
+    "size": "576x1024",
+    "bytes": 66973,
+    "contentType": "image/jpeg"
+  },
+  {
+    "file": "03-cartoon.jpg",
+    "command": "cartoon cat astronaut on the moon, playful pose, bright colours, 4:5",
+    "prompt": "cartoon cat astronaut on the moon, playful pose, bright colours, cartoon illustration, bold clean outlines, flat vibrant colours, playful character design, smooth shapes, vertical portrait composition",
+    "provider": "pollinations",
+    "mode": "local",
+    "style": "cartoon",
+    "size": "768x960",
+    "bytes": 66754,
+    "contentType": "image/jpeg"
+  },
+  {
+    "file": "04-logo.jpg",
+    "command": "minimal flat vector coffee cup logo, warm brown and cream colours, clean background, 1:1",
+    "prompt": "Minimal flat vector coffee cup logo, warm brown and cream colors, clean white background, centered cup with simple steam lines, ., minimal flat vector coffee cup logo, warm brown and cream colours, clean background, clean vector logo design, minimal flat colours, centred composition, crisp edges, simple background, centred square composition",
+    "provider": "pollinations",
+    "mode": "thought",
+    "style": "logo",
+    "size": "768x768",
+    "bytes": 32778,
+    "contentType": "image/jpeg"
+  }
+]
