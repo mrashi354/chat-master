@@ -25,9 +25,11 @@ import {
   Video,
   Volume2,
   VolumeX,
+  Wand2,
   Wrench,
 } from "lucide-react";
 import MessageBubble from "@/components/MessageBubble";
+import ImageStudio from "@/components/ImageStudio";
 import SettingsModal, { type Tab } from "@/components/SettingsModal";
 import Toolbox, { type ToolId } from "@/components/Toolbox";
 import VideoStudio from "@/components/VideoStudio";
@@ -36,9 +38,11 @@ import {
   createChat,
   EMPTY_STATUS,
   loadState,
+  looksLikeImageEditRequest,
   looksLikeImageRequest,
   looksLikeSearch,
   mediaPromptFromText,
+  scriptFromImageRequest,
   mediaStatusText,
   looksLikeVideoRequest,
   makeMessage,
@@ -65,6 +69,7 @@ import {
   systemAddition,
   type Preferences,
 } from "@/lib/preferences";
+import { analyzeImage } from "@/lib/image-analysis";
 import { createVideoFromImage, fetchImageBlob } from "@/lib/media";
 import {
   detectTool,
@@ -92,6 +97,7 @@ const COMMANDS = [
     hint: item.hint,
   })),
   { command: "/toolbox", label: "Toolbox", hint: "16 instant tools — JSON, hash, regex, color aur zyada" },
+  { command: "/edit", label: "Image Studio", hint: "Photo par script/caption likhein aur PNG export karein" },
   { command: "/reel", label: "Reel Studio", hint: "Script + photos se reel/video banayein" },
   { command: "/image", label: "Image banana", hint: "AI se image generate karein" },
   { command: "/video", label: "Video banana", hint: "Image se animated clip (khali chhodkar studio kholein)" },
@@ -176,6 +182,10 @@ export default function ChatMaster() {
   const [studioOpen, setStudioOpen] = useState(false);
   const [studioScript, setStudioScript] = useState("");
   const [studioPrompt, setStudioPrompt] = useState("");
+  const [studioImages, setStudioImages] = useState<Array<{ name: string; url: string }>>([]);
+  const [imageStudioOpen, setImageStudioOpen] = useState(false);
+  const [imageStudioImage, setImageStudioImage] = useState<{ name: string; url: string } | null>(null);
+  const [imageStudioText, setImageStudioText] = useState("");
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [showTools, setShowTools] = useState(false);
   const [uploading, setUploading] = useState(false);
@@ -518,10 +528,21 @@ export default function ChatMaster() {
     }
   };
 
-  const openStudio = (script = "", prompt = "") => {
+  const openStudio = (
+    script = "",
+    prompt = "",
+    images: Array<{ name: string; url: string }> = []
+  ) => {
     setStudioScript(script);
     setStudioPrompt(prompt);
+    setStudioImages(images);
     setStudioOpen(true);
+  };
+
+  const openImageStudio = (image: { name: string; url: string } | null, text = "") => {
+    setImageStudioImage(image);
+    setImageStudioText(text);
+    setImageStudioOpen(true);
   };
 
   const insertReel = (url: string, fileName: string, script: string) => {
@@ -545,6 +566,34 @@ export default function ChatMaster() {
       )
     );
     showToast("Reel chat me add ho gayi.");
+  };
+
+  const insertEditedImage = (url: string, fileName: string, text: string) => {
+    let targetId = activeId;
+    if (!targetId) {
+      const chat = createChat();
+      targetId = chat.id;
+      setChats((prev) => [chat, ...prev]);
+      setActiveId(chat.id);
+    }
+    const label = text.trim() || "Edited image";
+    const userMessage = makeMessage("user", `🖼️ Photo me script: ${titleFromMessage(label)}`);
+    const assistant = makeMessage("assistant", "✅ Script photo par add kar di gayi. Download ya edit karne ke liye Image Studio kholein.", {
+      media: { type: "image", url, prompt: label, fileName },
+    });
+    setChats((prev) =>
+      prev.map((chat) =>
+        chat.id === targetId
+          ? { ...chat, messages: [...chat.messages, userMessage, assistant], updatedAt: Date.now() }
+          : chat
+      )
+    );
+    showToast("Edited image chat me add ho gayi.");
+  };
+
+  const sendEditedToReel = (url: string, fileName: string, text: string) => {
+    openStudio(text || "Ek cinematic reel", `Edited photo: ${fileName}`, [{ name: fileName, url }]);
+    showToast("Edited image Reel Studio me open ho gayi.");
   };
 
   const openToolbox = (tool: ToolId = "json") => {
@@ -606,6 +655,46 @@ export default function ChatMaster() {
     let forceSearch = false;
     let forceMedia: "image" | "video" | null = null;
 
+    // Image attached + "is pic me script add karo" → actually edit the photo.
+    const attachedImage = pendingFiles.find((file) => file.type.startsWith("image/") && file.url);
+    if (!options?.base && !regenerate && attachedImage?.url && looksLikeImageEditRequest(userText)) {
+      let targetId = activeId;
+      if (!targetId) {
+        const fresh = createChat();
+        targetId = fresh.id;
+        setChats((prev) => [fresh, ...prev]);
+        setActiveId(fresh.id);
+      }
+      const userMessage = makeMessage("user", userText, { attachments: pendingFiles });
+      setChats((prev) =>
+        prev.map((item) =>
+          item.id === targetId
+            ? { ...item, messages: [...item.messages, userMessage], updatedAt: Date.now() }
+            : item
+        )
+      );
+      setInput("");
+      setAttachments([]);
+      openImageStudio(
+        { name: attachedImage.name, url: attachedImage.url },
+        scriptFromImageRequest(userText)
+      );
+      return;
+    }
+
+    // No photo? Let them open the editor directly.
+    if (
+      !options?.base &&
+      !regenerate &&
+      !attachedImage &&
+      /\b(image|photo|photo-?)\s*(editor|studio|edit)\b|\bedit\s+(an?\s+)?(image|photo)\b/i.test(userText) &&
+      !/\b(banao|banwao|generate|create)\b/i.test(userText)
+    ) {
+      setInput("");
+      openImageStudio(null, "");
+      return;
+    }
+
     // Reel Studio — script + photos se multi-scene video.
     if (
       !options?.base &&
@@ -638,6 +727,16 @@ export default function ChatMaster() {
       }
       if (name === "/toolbox") {
         openToolbox();
+        return;
+      }
+      if (name === "/edit") {
+        const firstImage = pendingFiles.find((file) => file.type.startsWith("image/") && file.url);
+        openImageStudio(
+          firstImage?.url ? { name: firstImage.name, url: firstImage.url } : null,
+          userText.slice(name.length).trim()
+        );
+        setInput("");
+        setAttachments([]);
         return;
       }
       if (name === "/reel" || name === "/studio") {
@@ -981,11 +1080,19 @@ export default function ChatMaster() {
       }
       try {
         if (file.type.startsWith("image/")) {
-          added.push({
+          const imageAttachment: Attachment = {
             name: file.name,
             type: file.type,
             size: file.size,
             url: URL.createObjectURL(file),
+          };
+          added.push(imageAttachment);
+          // Offline visual summary becomes chat context — no "I can't see images" reply.
+          void analyzeImage(imageAttachment.url as string).then((analysis) => {
+            if (!analysis) return;
+            setAttachments((prev) =>
+              prev.map((item) => (item.url === imageAttachment.url ? { ...item, analysis } : item))
+            );
           });
         } else if (file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf")) {
           const form = new FormData();
@@ -1269,6 +1376,14 @@ export default function ChatMaster() {
               aria-label="Toolbox"
             >
               <Boxes size={18} />
+            </button>
+            <button
+              className="icon-btn"
+              onClick={() => openImageStudio(null, "")}
+              title="Image Studio — photo par script (/edit)"
+              aria-label="Image Studio"
+            >
+              <Wand2 size={18} />
             </button>
             <button
               className="icon-btn"
@@ -1576,12 +1691,23 @@ export default function ChatMaster() {
       />
 
       <VideoStudio
-        key={`${studioScript}|${studioPrompt}`}
+        key={`${studioScript}|${studioPrompt}|${studioImages.map((item) => item.url).join(",")}`}
         open={studioOpen}
         initialScript={studioScript}
         initialPrompt={studioPrompt}
+        initialImages={studioImages}
         onClose={() => setStudioOpen(false)}
         onInsert={insertReel}
+      />
+
+      <ImageStudio
+        key={`${imageStudioOpen}-${imageStudioImage?.url ?? "none"}`}
+        open={imageStudioOpen}
+        initialImage={imageStudioImage}
+        initialText={imageStudioText}
+        onClose={() => setImageStudioOpen(false)}
+        onInsert={insertEditedImage}
+        onSendToReel={sendEditedToReel}
       />
 
       <Toolbox

@@ -15,6 +15,7 @@ import {
   X,
 } from "lucide-react";
 import { fetchImageBlob } from "@/lib/media";
+import fixWebmDuration from "fix-webm-duration";
 
 type Aspect = "9:16" | "1:1" | "16:9";
 type Transition = "fade" | "slide" | "zoom" | "wipe" | "none";
@@ -30,6 +31,7 @@ interface Props {
   open: boolean;
   initialScript?: string;
   initialPrompt?: string;
+  initialImages?: Array<{ name: string; url: string }>;
   onClose: () => void;
   onInsert?: (url: string, fileName: string, script: string) => void;
 }
@@ -277,7 +279,7 @@ function drawFrame(options: DrawOptions) {
   ctx.fillStyle = "#7c8cff";
   ctx.fillRect(24 * unit, 52 * unit, headerWidth * progress, 2 * unit);
 
-  // Caption: fades/slides in line-by-line and eases out near the scene end.
+  // Instagram-style karaoke caption: active word is highlighted as the scene plays.
   if (showCaption && safeScenes[index]?.trim()) {
     const fadeIn = easeOutCubic(local / 0.42);
     const fadeOut = 1 - easeInOutCubic(clamp01((local - (duration - 0.4)) / 0.4));
@@ -296,6 +298,13 @@ function drawFrame(options: DrawOptions) {
       const boxY = startY - fontSize - padY;
       const boxH = lines.length * lineHeight + padY * 2 - (lineHeight - fontSize);
 
+      const wordLines = lines.map((line) => line.split(/\s+/).filter(Boolean));
+      const flatWords = wordLines.flat();
+      const activeWord = Math.min(
+        Math.max(0, flatWords.length - 1),
+        Math.floor(clamp01((local - 0.25) / Math.max(0.5, duration - 1)) * flatWords.length)
+      );
+
       ctx.save();
       ctx.globalAlpha = alpha * 0.9;
       ctx.fillStyle = "rgba(6,8,18,0.46)";
@@ -304,17 +313,32 @@ function drawFrame(options: DrawOptions) {
       ctx.strokeStyle = "rgba(255,255,255,0.1)";
       ctx.lineWidth = Math.max(1, unit);
       ctx.stroke();
-      ctx.fillStyle = "#fff";
-      ctx.shadowColor = "rgba(0,0,0,0.9)";
-      ctx.shadowBlur = 10 * unit;
-      lines.forEach((line, i) => {
-        const lineAlpha = clamp01(fadeIn * 1.8 - i * 0.28) * fadeOut;
+
+      ctx.textAlign = "left";
+      const spaceW = ctx.measureText(" ").width;
+      let flatIndex = 0;
+      wordLines.forEach((words, li) => {
+        const lineAlpha = clamp01(fadeIn * 1.8 - li * 0.28) * fadeOut;
         ctx.globalAlpha = alpha * lineAlpha;
-        ctx.fillText(
-          line,
-          w / 2 + (1 - lineAlpha) * 10 * unit * (i % 2 ? -1 : 1),
-          startY + i * lineHeight + (1 - lineAlpha) * 8 * unit
-        );
+        const widths = words.map((word) => ctx.measureText(word).width);
+        const totalW = widths.reduce((sum, value) => sum + value, 0) + spaceW * Math.max(0, words.length - 1);
+        let x = (w - totalW) / 2 + (1 - lineAlpha) * 8 * unit * (li % 2 ? -1 : 1);
+        const baseline = startY + li * lineHeight + (1 - lineAlpha) * 8 * unit;
+        words.forEach((word, wi) => {
+          const isActive = flatIndex === activeWord;
+          ctx.fillStyle = isActive ? "#ffd66b" : "#ffffff";
+          ctx.shadowColor = isActive ? "rgba(255,190,70,0.9)" : "rgba(0,0,0,0.9)";
+          ctx.shadowBlur = (isActive ? 18 : 10) * unit;
+          ctx.fillText(word, x, baseline);
+          if (isActive) {
+            ctx.shadowBlur = 0;
+            ctx.fillStyle = "#ffd66b";
+            roundedRect(ctx, x, baseline + 5 * unit, widths[wi], 3 * unit, 1.5 * unit);
+            ctx.fill();
+          }
+          x += widths[wi] + spaceW;
+          flatIndex += 1;
+        });
       });
       ctx.restore();
     }
@@ -347,12 +371,15 @@ export default function VideoStudio({
   open,
   initialScript = "",
   initialPrompt = "",
+  initialImages = [],
   onClose,
   onInsert,
 }: Props) {
   const [script, setScript] = useState(initialScript || SAMPLE_SCRIPT);
   const [theme, setTheme] = useState(initialPrompt);
-  const [images, setImages] = useState<SceneImage[]>([]);
+  const [images, setImages] = useState<SceneImage[]>(() =>
+    initialImages.map((item) => ({ id: `preset-${Date.now()}-${Math.random()}`, name: item.name, url: item.url }))
+  );
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
   const [audioName, setAudioName] = useState("");
   const [aspect, setAspect] = useState<Aspect>("9:16");
@@ -375,6 +402,7 @@ export default function VideoStudio({
   const cancelRef = useRef<(() => void) | null>(null);
   const imageInputRef = useRef<HTMLInputElement>(null);
   const audioInputRef = useRef<HTMLInputElement>(null);
+  const presetUrlsRef = useRef(new Set(initialImages.map((item) => item.url)));
   const imagesRef = useRef(images);
   const audioUrlRef = useRef(audioUrl);
   const resultUrlRef = useRef(resultUrl);
@@ -435,9 +463,12 @@ export default function VideoStudio({
   }, [images, scenes, theme, size.width, size.height, sceneDuration, showCaption, transition, motion, background]);
 
   useEffect(() => {
+    const presetUrls = presetUrlsRef.current;
     return () => {
       cancelRef.current?.();
-      imagesRef.current.forEach((item) => URL.revokeObjectURL(item.url));
+      imagesRef.current.forEach((item) => {
+        if (!presetUrls.has(item.url)) URL.revokeObjectURL(item.url);
+      });
       if (audioUrlRef.current?.startsWith("blob:")) URL.revokeObjectURL(audioUrlRef.current);
       if (resultUrlRef.current) URL.revokeObjectURL(resultUrlRef.current);
     };
@@ -466,7 +497,7 @@ export default function VideoStudio({
   const removeImage = (id: string) => {
     setImages((prev) => {
       const target = prev.find((item) => item.id === id);
-      if (target) URL.revokeObjectURL(target.url);
+      if (target && !presetUrlsRef.current.has(target.url)) URL.revokeObjectURL(target.url);
       return prev.filter((item) => item.id !== id);
     });
   };
@@ -494,16 +525,21 @@ export default function VideoStudio({
     if (audioInputRef.current) audioInputRef.current.value = "";
   };
 
-  const generateImages = async () => {
+  const generateImages = async (onlyMissing = false) => {
     if (!scenes.length) {
       setError("Pehle script likhein.");
+      return;
+    }
+    const start = onlyMissing ? images.length : 0;
+    if (start >= scenes.length) {
+      setError("Sab scenes ke liye images already hain.");
       return;
     }
     setGenerating(true);
     setError("");
     try {
       const created: SceneImage[] = [];
-      for (let i = 0; i < scenes.length; i++) {
+      for (let i = start; i < scenes.length; i++) {
         const prompt = `${theme.trim() || "cinematic photorealistic reel"} — scene ${i + 1}: ${scenes[i]}`;
         const blob = await fetchImageBlob(prompt, 768, 768);
         created.push({
@@ -511,7 +547,7 @@ export default function VideoStudio({
           name: `scene-${i + 1}.jpg`,
           url: URL.createObjectURL(blob),
         });
-        setProgress(Math.round(((i + 1) / scenes.length) * 100));
+        setProgress(Math.round(((i - start + 1) / (scenes.length - start)) * 100));
       }
       setImages((prev) => [...prev, ...created].slice(0, 12));
     } catch (err) {
@@ -583,18 +619,33 @@ export default function VideoStudio({
       }
     }
 
+    const total = scenes.length * sceneDuration;
+    let cancelledRender = false;
+
     const recorder = new MediaRecorder(new MediaStream(tracks), { mimeType: mime, videoBitsPerSecond: 4_000_000 });
     const chunks: BlobPart[] = [];
     recorder.ondataavailable = (event) => {
       if (event.data.size) chunks.push(event.data);
     };
-    recorder.onstop = () => {
-      const blob = new Blob(chunks, { type: "video/webm" });
+    recorder.onstop = async () => {
+      audioElement?.pause();
+      void audioContext?.close();
+      if (cancelledRender) {
+        cancelRef.current = null;
+        setRendering(false);
+        return;
+      }
+      const raw = new Blob(chunks, { type: "video/webm" });
+      let blob = raw;
+      try {
+        // MediaRecorder omits duration — patch it so players show a real timeline.
+        blob = await fixWebmDuration(raw, total * 1000, { logger: false });
+      } catch {
+        // Raw WebM still plays; some browsers just show an unknown duration.
+      }
       const url = URL.createObjectURL(blob);
       setResultUrl(url);
       setResultName(`chat-master-reel-${aspect.replace(":", "x")}.webm`);
-      audioElement?.pause();
-      void audioContext?.close();
       setRendering(false);
       setProgress(100);
       cancelRef.current = null;
@@ -602,7 +653,6 @@ export default function VideoStudio({
 
     let frame = 0;
     const started = performance.now();
-    const total = scenes.length * sceneDuration;
 
     const cleanup = () => {
       cancelAnimationFrame(frame);
@@ -612,7 +662,10 @@ export default function VideoStudio({
       cancelRef.current = null;
       setRendering(false);
     };
-    cancelRef.current = cleanup;
+    cancelRef.current = () => {
+      cancelledRender = true;
+      cleanup();
+    };
 
     const tick = (now: number) => {
       const elapsed = (now - started) / 1000;
@@ -694,6 +747,16 @@ export default function VideoStudio({
                 {generating ? <Loader2 size={15} className="spin" /> : <Sparkles size={15} />}
                 {generating ? "Images ban rahi hain…" : "Script se auto images"}
               </button>
+              {images.length > 0 && images.length < scenes.length && (
+                <button
+                  type="button"
+                  className="studio-btn"
+                  onClick={() => void generateImages(true)}
+                  disabled={generating || rendering}
+                >
+                  <ImagePlus size={15} /> +{scenes.length - images.length} scene image
+                </button>
+              )}
               <input
                 ref={imageInputRef}
                 type="file"
@@ -754,6 +817,22 @@ export default function VideoStudio({
             </div>
 
             <h3>5. Settings</h3>
+            <div className="studio-row">
+              <button
+                type="button"
+                className="studio-btn accent"
+                onClick={() => {
+                  setAspect("9:16");
+                  setSceneDuration(3);
+                  setMotion("dramatic");
+                  setTransition("zoom");
+                  setShowCaption(true);
+                  setError("");
+                }}
+              >
+                <Sparkles size={15} /> Instagram-style preset
+              </button>
+            </div>
             <div className="studio-settings">
               <label>
                 <span>Format</span>

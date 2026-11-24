@@ -868,9 +868,16 @@ a:focus-visible {
     radial-gradient(circle at 26px 4px, #28c840 3px, transparent 3.5px);
 }
 
-.code-head .copy-btn { margin-left: auto; }
+.code-head .copy-btn,
+.code-head-actions { margin-left: auto; }
+.code-head-actions { display: flex; align-items: center; gap: 4px; }
+.code-head-actions button { margin-left: 0; }
 
-.copy-btn {
+.code-preview { background: #fff; }
+.code-preview iframe { display: block; width: 100%; min-height: 240px; border: 0; background: #fff; }
+
+.copy-btn,
+.code-head-actions button {
   display: inline-flex;
   align-items: center;
   gap: 5px;
@@ -882,7 +889,8 @@ a:focus-visible {
   border-radius: 6px;
 }
 
-.copy-btn:hover {
+.copy-btn:hover,
+.code-head-actions button:hover {
   color: var(--text);
   background: var(--surface-hover);
 }
@@ -1620,7 +1628,13 @@ a:focus-visible {
 }
 .preview-frame canvas { display: block; width: 100%; height: 100%; object-fit: contain; }
 .studio-result { display: flex; flex-direction: column; gap: 8px; }
-.studio-result video { width: 100%; max-height: 30dvh; border-radius: 10px; background: #000; }
+.studio-result video,
+.studio-result img { width: 100%; max-height: 30dvh; border-radius: 10px; background: #000; object-fit: contain; }
+.studio-result small { color: var(--text-dim); font-size: 10px; word-break: break-all; }
+.studio-empty { display: flex; flex-direction: column; align-items: center; gap: 9px; padding: 20px; color: var(--text-dim); font-size: 11px; text-align: center; }
+.studio-file-chip { align-self: center; max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-soft); font-size: 10px; }
+.studio-error { margin: 9px 0 0; color: #ff9a9a; font-size: 11px; }
+.studio-settings input[type="range"] { width: 100%; accent-color: var(--accent); }
 .spin { animation: studio-spin 0.9s linear infinite; }
 @keyframes studio-spin { to { transform: rotate(360deg); } }
 

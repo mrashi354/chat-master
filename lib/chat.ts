@@ -7,6 +7,7 @@ export interface Attachment {
   type: string;
   size: number;
   text?: string;
+  analysis?: string;
   url?: string;
   pages?: number;
 }
@@ -284,7 +285,7 @@ export function toApiMessages(messages: Message[]) {
         if (file.text) {
           content += `\n\n[Attached file: ${file.name}${file.pages ? `, ${file.pages} pages` : ""}]\n${file.text.slice(0, 12000)}`;
         } else if (file.type.startsWith("image/")) {
-          content += `\n\n[Attached image: ${file.name} — no image understanding available in free mode]`;
+          content += `\n\n[Attached image: ${file.name}]\n${file.analysis ?? "No programmatic visual summary is available for this image."}`;
         } else {
           content += `\n\n[Attached file: ${file.name}]`;
         }
@@ -311,6 +312,36 @@ export function looksLikeImageRequest(text: string): boolean {
   // "image ke liye code likho" should stay a coding request.
   if (/\b(code|program|script|function|api|html|css)\b/.test(lower)) return false;
   return IMAGE_WORDS.some((word) => lower.includes(word));
+}
+
+const EDIT_WORDS =
+  /(?:add|jo\s*de|jod|daal|lagao|lagaao|likh|write|put|overlay|caption|script|scripe?teo|text|title|heading|shayari|quote|poem|kavita|slogan|लिख|जोड़|डाल|शायरी|कैप्शन|स्क्रिप्ट)/i;
+
+/** Image attached + "is pic me script add karo" → open the editor, don't chat about it. */
+export function looksLikeImageEditRequest(text: string): boolean {
+  return EDIT_WORDS.test(text);
+}
+
+/** Pull the actual words to draw out of a Hinglish editing instruction. */
+export function scriptFromImageRequest(text: string): string {
+  const quoted = /["“']([^"”']{3,})["”']/.exec(text)?.[1];
+  if (quoted) return quoted.trim();
+
+  const cleaned = text
+    .replace(/\b(?:is|ye|this|us)\s+(?:pic|photo|image|picture|tasveer|तस्वीर)\s+(?:ma|me|men|main|mein|par|pe|on|में| पर)\b/gi, " ")
+    .replace(/\b(?:is|ye|this)\s+(?:pic|photo|image|picture)\b/gi, " ")
+    .replace(/\b(?:add|daal\s*do|daal|lagao|laga\s*do|likh\s*do|likho|write|put|जोड़ो|डालो|लिखो)\b/gi, " ")
+    .replace(/\b(?:a|ak|ek|one|the|some|एक)\s+(?:script|scripteo|scripeo|caption|text|shayari|quote|title|heading|line|poem|kavita|slogan)\b/gi, " ")
+    .replace(/\b(?:script|scripteo|scripeo|caption|text|shayari|quote|title|heading|poem|kavita|slogan|overlay|स्क्रिप्ट|शायरी|कैप्शन)\b/gi, " ")
+    .replace(/\b(?:kr\s*do|kar\s*do|kar\s*diya|do|de|diya|diye|chahiye|please|pls|hai|hain)\b/gi, " ")
+    .replace(/[,:;!\-_]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  if (cleaned.length < 3 || /^(?:ak|ek|a|an|the|is|ye|photo|pic|image)$/i.test(cleaned)) {
+    return "Apni kahani yahin se shuru hoti hai ✨";
+  }
+  return cleaned.slice(0, 300);
 }
 
 export function revokeMessageMediaItem(message: Message): void {

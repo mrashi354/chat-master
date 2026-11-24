@@ -2,7 +2,7 @@
 
 import { isValidElement, useEffect, useRef, useState, type ReactNode } from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
-import { Check, Copy } from "lucide-react";
+import { Check, Code2, Copy, Play } from "lucide-react";
 
 function nodeText(node: ReactNode): string {
   if (typeof node === "string" || typeof node === "number") return String(node);
@@ -46,6 +46,53 @@ function CopyButton({ text, label = "Copy" }: { text: string; label?: string }) 
   );
 }
 
+function CodeBlock({
+  code,
+  language,
+  children,
+}: {
+  code: string;
+  language: string;
+  children: ReactNode;
+}) {
+  const [preview, setPreview] = useState(false);
+  const canPreview = /^(html|svg)$/i.test(language);
+
+  return (
+    <div className="code-block">
+      <div className="code-head">
+        <span>{language}</span>
+        <div className="code-head-actions">
+          {canPreview && (
+            <button
+              type="button"
+              onClick={() => setPreview((value) => !value)}
+              aria-label={preview ? "Code dikhaayein" : "Preview chalayein"}
+              title={preview ? "Code dikhaayein" : "Live preview (HTML)"}
+            >
+              {preview ? <Code2 size={14} /> : <Play size={14} />}
+              <span>{preview ? "Code" : "Preview"}</span>
+            </button>
+          )}
+          <CopyButton text={code} label="Copy code" />
+        </div>
+      </div>
+      {preview ? (
+        <div className="code-preview">
+          <iframe
+            key={code}
+            title="HTML preview"
+            sandbox="allow-scripts allow-forms allow-modals allow-popups"
+            srcDoc={code}
+          />
+        </div>
+      ) : (
+        <pre>{children}</pre>
+      )}
+    </div>
+  );
+}
+
 const components: Components = {
   p: ({ children }) => <p>{children}</p>,
   a: ({ children, href }) => (
@@ -58,15 +105,7 @@ const components: Components = {
     const props = (element?.props ?? {}) as { children?: ReactNode; className?: string };
     const code = nodeText(props.children).replace(/\n$/, "");
     const language = /language-(\w+)/.exec(props.className ?? "")?.[1] ?? "code";
-    return (
-      <div className="code-block">
-        <div className="code-head">
-          <span>{language}</span>
-          <CopyButton text={code} label="Copy code" />
-        </div>
-        <pre>{children}</pre>
-      </div>
-    );
+    return <CodeBlock code={code} language={language}>{children}</CodeBlock>;
   },
   code: ({ children, className }) =>
     className?.startsWith("language-") ? (

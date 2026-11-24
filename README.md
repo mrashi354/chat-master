@@ -22,14 +22,17 @@ voice input/output aur har language mein jawab. Aap jis language mein poochho, u
 - 📎 **File attachments** — PDF (text extraction), TXT/MD/CSV/JSON/code files aur images attach karke un par sawaal; max 5 files, 12 MB each
 - 🧰 **Tools** — calculator, unit converter, live weather (Open-Meteo), web page reader, Wikipedia summary, dictionary aur timezone clock — sab free, bina key ke
 - 🧰 **Toolbox (`/toolbox`, `Ctrl/.`)** — 16 instant client-side tools: JSON formatter, Base64, SHA-256/SHA-1 hash, UUID, strong password generator, regex tester, word/character counter, case converter, URL encode/decode, color converter (hex/rgb/hsl), percentage calculator, date calculator, slugify, lorem generator, number bases aur live Markdown preview. Output ek click se chat me add ho jata hai
-- ⌘ **Slash commands** — `/calc`, `/convert`, `/weather`, `/read`, `/wiki`, `/define`, `/time`, `/toolbox`, `/reel`, `/image`, `/video`, `/search`, `/clear`, `/help`
+- ⌘ **Slash commands** — `/calc`, `/convert`, `/weather`, `/read`, `/wiki`, `/define`, `/time`, `/toolbox`, `/edit`, `/reel`, `/image`, `/video`, `/search`, `/clear`, `/help`
 - 🧠 **Presets + memory** — Code mentor, Teacher, Writer, Translator jaise personas, custom instructions aur user facts jo har jawab me context ban jaate hain
 - 🗂️ **Advanced chat management** — search, rename, pin, per-message edit/delete, branching regenerate, JSON export/import (validated + duplicate-free)
 - 💾 **Draft autosave** — har chat ka adhoora likha hua message browser me save hota hai; reload ya chat switch ke baad wapas mil jata hai
 - ✨ **Smoother UX** — last jawab ke neeche follow-up suggestion chips, upar scroll karne pe "neeche jayein" button, 👍/👎 feedback, drag-and-drop attachments, IME-safe Enter (Hindi/Urdu typing me gallery accidentally send nahi hoti), single-chat delete confirmation
 - 📤 **Markdown transcript export** — Settings → Data se poori chat history readable `.md` file me download; JSON backup/blob URLs safe clean karke export/import hote hain
 - ⚙️ **Settings panel** — temperature control, auto-search/auto-voice toggles, data backup aur shortcut guide (`/help` seedha Shortcuts tab kholta hai)
-- 🎬 **Reel / Video Studio (`/reel`)** — script ki har line ek scene, apni photos ya auto-generated images, **cinematic camera motion** (Cinematic pan / Soft zoom / Dramatic push / Static), 5 transitions (Fade, Slide, Zoom, Circle wipe, None), animated line-by-line captions, vignette + glow progress, **live animated preview**, 9:16 / 1:1 / 16:9 format, optional background music, WebM download aur seedha chat me add. Pure browser-side rendering (Chrome/Edge recommended)
+- 🎬 **Reel / Video Studio (`/reel`)** — script ki har line ek scene, apni photos ya auto-generated images, **cinematic camera motion** (Cinematic pan / Soft zoom / Dramatic push / Static), 5 transitions (Fade, Slide, Zoom, Circle wipe, None), animated captions, vignette + glow progress, **live animated preview**, 9:16 / 1:1 / 16:9 format, optional background music, WebM download aur seedha chat me add. Pure browser-side rendering (Chrome/Edge recommended)
+- 🖼️ **Image Studio (`/edit`)** — photo attach karke "is pic me script add karo" likhte hi editor khulta hai. Script/caption par live preview, 4 style presets (Reel caption, Quote, Bold poster, Clean), size/position/align/colour/box controls, PNG download, chat me insert aur seedha Reel Studio me bhejne ka option
+- 👁️ **Image context** — attach ki gayi image ka offline visual summary (size, orientation, dominant colour, brightness) chat context me jata hai, taaki assistant "main images nahi dekh sakta" na kahe. Image Studio me bhejne par asli editing hoti hai
+- 🧪 **HTML live preview** — jab bhi code block `html`/`svg` ho, "Preview" button se sandboxed iframe me turant chal kar dekha ja sakta hai (Claude artifacts jaisa chhota version)
 
 ## Setup (pehli baar)
 
