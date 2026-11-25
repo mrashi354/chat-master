@@ -35,6 +35,7 @@ import Toolbox, { type ToolId } from "@/components/Toolbox";
 import VideoStudio from "@/components/VideoStudio";
 import Sidebar from "@/components/Sidebar";
 import {
+  asksAboutImage,
   createChat,
   EMPTY_STATUS,
   loadState,
@@ -166,7 +167,6 @@ export default function ChatMaster() {
   const [streamingId, setStreamingId] = useState<string | null>(null);
   const [isRecording, setIsRecording] = useState(false);
   const [isSpeaking, setIsSpeaking] = useState(false);
-  const [voiceOn, setVoiceOn] = useState(false);
   const [webSearch, setWebSearch] = useState(false);
   const [imageMode, setImageMode] = useState(false);
   const [videoMode, setVideoMode] = useState(false);
@@ -176,6 +176,8 @@ export default function ChatMaster() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [toast, setToast] = useState<Toast | null>(null);
   const [preferences, setPreferences] = useState<Preferences>(DEFAULT_PREFERENCES);
+  // Voice toggle lives in preferences so Settings aur topbar hamesha same dikhte hain.
+  const voiceOn = preferences.autoSpeak;
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsTab, setSettingsTab] = useState<Tab>("assistant");
   const [toolboxOpen, setToolboxOpen] = useState(false);
@@ -254,7 +256,6 @@ export default function ChatMaster() {
       setInput(readDraft(saved.activeId));
       const prefs = loadPreferences();
       setPreferences(prefs);
-      setVoiceOn(prefs.autoSpeak);
       setHydrated(true);
       const savedTheme = window.localStorage.getItem(THEME_KEY);
       if (savedTheme === "dark" || savedTheme === "light") setTheme(savedTheme);
@@ -338,6 +339,7 @@ export default function ChatMaster() {
         if (toolboxOpen) setToolboxOpen(false);
         else if (studioOpen) setStudioOpen(false);
         else if (settingsOpen) setSettingsOpen(false);
+        else if (imageStudioOpen) setImageStudioOpen(false);
         else if (showTools) setShowTools(false);
         else if (slashMatches.length) setInput("");
         else if (isLoading) abortRef.current?.abort();
@@ -345,7 +347,7 @@ export default function ChatMaster() {
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [isLoading, settingsOpen, studioOpen, toolboxOpen, showTools, slashMatches.length, newChat]);
+  }, [isLoading, settingsOpen, studioOpen, toolboxOpen, imageStudioOpen, showTools, slashMatches.length, newChat]);
 
   useEffect(() => {
     return () => {
@@ -859,7 +861,10 @@ export default function ChatMaster() {
       forceMedia === "video" || (!forceMedia && !imageMode && looksLikeVideoRequest(userText));
     const wantsImage =
       forceMedia === "image" ||
-      (!forceMedia && !wantsVideo && (imageMode || looksLikeImageRequest(userText)));
+      (!forceMedia &&
+        !wantsVideo &&
+        (imageMode || looksLikeImageRequest(userText)) &&
+        !(attachedImage && asksAboutImage(userText)));
 
     // Tool + web search run in parallel so the chat request can start sooner.
     let toolResults: ToolResult[] = [];
@@ -930,7 +935,7 @@ export default function ChatMaster() {
           { tools: toolResults.length ? toolResults : undefined }
         );
 
-        const generated = await fetchImageBlob(cleanPrompt, 768, 768);
+        const generated = await fetchImageBlob(cleanPrompt, 768, 768, controller.signal);
         const blob = generated.blob;
         if (controller.signal.aborted) throw new Error("Aborted");
 
@@ -949,7 +954,7 @@ export default function ChatMaster() {
 
         if (wantsVideo) {
           updateAssistant(chatId as string, assistantMessage.id, "🎬 Image ko video clip me badal raha hoon…");
-          const videoBlob = await createVideoFromImage(blob, 4500);
+          const videoBlob = await createVideoFromImage(blob, 4500, controller.signal);
           if (controller.signal.aborted) throw new Error("Aborted");
           URL.revokeObjectURL(createdUrl);
           createdUrl = URL.createObjectURL(videoBlob);
@@ -1275,7 +1280,6 @@ export default function ChatMaster() {
     }
     const next = !voiceOn;
     if (voiceOn) stopSpeaking();
-    setVoiceOn(next);
     setPreferences((prev) => ({ ...prev, autoSpeak: next }));
   };
 
@@ -1698,7 +1702,10 @@ export default function ChatMaster() {
         preferences={preferences}
         chats={chats}
         onClose={() => setSettingsOpen(false)}
-        onChange={setPreferences}
+        onChange={(next) => {
+          if (!next.autoSpeak) stopSpeaking();
+          setPreferences(next);
+        }}
         onImport={importChats}
         onClearAll={clearAllChats}
       />

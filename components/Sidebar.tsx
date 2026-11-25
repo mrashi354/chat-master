@@ -197,7 +197,7 @@ export default function Sidebar({
         <div className="sidebar-footer">
           <div className="sidebar-label">Features</div>
           <div className="feature-list">
-            <span className={status.chat ? "on" : "off"} title={status.chat ? "Chat ready" : "ANTHROPIC_API_KEY missing"}>
+            <span className={status.chat ? "on" : "off"} title={status.chat ? "Chat ready (Claude / free fallback)" : "Chat unavailable"}>
               <Sparkles size={13} /> Chat
             </span>
             <span className={status.search ? "on" : "off"} title="Search (Tavily + free fallback)">

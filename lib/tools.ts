@@ -73,6 +73,23 @@ export function parseCommand(text: string): { tool: ToolName; args: string } | n
   return { tool: command.tool, args: match[2].trim() };
 }
 
+const WEATHER_STOP_WORDS = new Set([
+  "aaj", "today", "kal", "tomorrow", "abhi", "now", "current", "ab",
+  "ka", "ki", "ke", "kya", "kaisa", "kaise", "hai", "he", "me", "mein", "में",
+  "in", "at", "for", "of", "the", "what", "whats", "is", "how", "does", "like",
+  "weather", "mausam", "मौसम", "موسم", "batao", "batayein", "do", "please", "pls", "kindly",
+]);
+
+function weatherPlace(text: string): string {
+  return text
+    .replace(/[^\p{L}\p{N}\s'-]/gu, " ")
+    .split(/\s+/)
+    .filter((word) => word && !WEATHER_STOP_WORDS.has(word.toLowerCase()))
+    .slice(0, 3)
+    .join(" ")
+    .slice(0, 80);
+}
+
 /** Natural-language hints that can be answered by a deterministic tool. */
 export function detectTool(text: string): { tool: ToolName; args: string } | null {
   const explicit = parseCommand(text);
@@ -83,7 +100,7 @@ export function detectTool(text: string): { tool: ToolName; args: string } | nul
     return { tool: "calc", args: clean.replace(/=$/, "") };
   }
   if (/\b(weather|mausam|मौसम|موسم)\b/i.test(clean) && clean.length <= 160) {
-    return { tool: "weather", args: "" };
+    return { tool: "weather", args: weatherPlace(clean) };
   }
   if (/\b(define|meaning of|ka matlab|मतलब)\b/i.test(clean) && clean.length <= 120) {
     const word = clean.replace(/.*?(?:define|meaning of|ka matlab|मतलब)\s+/i, "").trim();

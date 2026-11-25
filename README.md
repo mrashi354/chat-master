@@ -27,7 +27,7 @@ voice input/output aur har language mein jawab. Aap jis language mein poochho, u
 - 🧰 **Toolbox (`/toolbox`, `Ctrl/.`)** — 16 instant client-side tools: JSON formatter, Base64, SHA-256/SHA-1 hash, UUID, strong password generator, regex tester, word/character counter, case converter, URL encode/decode, color converter (hex/rgb/hsl), percentage calculator, date calculator, slugify, lorem generator, number bases aur live Markdown preview. Output ek click se chat me add ho jata hai
 - ⌘ **Slash commands** — `/calc`, `/convert`, `/weather`, `/read`, `/wiki`, `/define`, `/time`, `/toolbox`, `/edit`, `/reel`, `/image`, `/video`, `/search`, `/clear`, `/help`
 - 🧠 **Presets + memory** — Code mentor, Teacher, Writer, Translator jaise personas, custom instructions aur user facts jo har jawab me context ban jaate hain
-- 🗂️ **Advanced chat management** — search, rename, pin, per-message edit/delete, branching regenerate, JSON export/import (validated + duplicate-free)
+- 🗂️ **Advanced chat management** — search, rename, pin, per-message edit/delete, regenerate, JSON export/import (validated + duplicate-free)
 - 💾 **Draft autosave** — har chat ka adhoora likha hua message browser me save hota hai; reload ya chat switch ke baad wapas mil jata hai
 - ✨ **Smoother UX** — last jawab ke neeche follow-up suggestion chips, upar scroll karne pe "neeche jayein" button, 👍/👎 feedback, drag-and-drop attachments, IME-safe Enter (Hindi/Urdu typing me gallery accidentally send nahi hoti), single-chat delete confirmation
 - 📤 **Markdown transcript export** — Settings → Data se poori chat history readable `.md` file me download; JSON backup/blob URLs safe clean karke export/import hote hain

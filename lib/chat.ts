@@ -266,13 +266,16 @@ export function writeDraft(chatId: string | null, text: string): void {
 }
 
 const SEARCH_WORDS = [
-  "latest", "today", "news", "current", "search", "2026",
+  "latest", "today", "news", "current", "search",
   "abhi", "aaj", "khabar", "mausam", "weather", "price", "score",
 ];
 
 export function looksLikeSearch(text: string): boolean {
   const lower = text.toLowerCase();
-  return SEARCH_WORDS.some((word) => lower.includes(word));
+  return (
+    SEARCH_WORDS.some((word) => lower.includes(word)) ||
+    lower.includes(String(new Date().getFullYear()))
+  );
 }
 
 export function toApiMessages(messages: Message[]) {
@@ -322,8 +325,16 @@ export function looksLikeImageRequest(text: string): boolean {
 const EDIT_WORDS =
   /(?:add|jo\s*de|jod|daal|lagao|lagaao|likh|write|put|overlay|caption|script|scripe?teo|text|title|heading|shayari|quote|poem|kavita|slogan|लिख|जोड़|डाल|शायरी|कैप्शन|स्क्रिप्ट)/i;
 
+/** "is photo me kya likha hai?" — question about an image, not an image command. */
+export function asksAboutImage(text: string): boolean {
+  const asks =
+    /\b(kya|what|kaise|how|kyun|why|kahan|where|kab|when|describe|samjhao|explain|batao|batayein|detail|details)\b/i.test(text);
+  return asks && !/\b(add|daal|lagao|likh\s*do|write|caption|script)\b/i.test(text);
+}
+
 /** Image attached + "is pic me script add karo" → open the editor, don't chat about it. */
 export function looksLikeImageEditRequest(text: string): boolean {
+  if (asksAboutImage(text)) return false;
   return EDIT_WORDS.test(text);
 }
 

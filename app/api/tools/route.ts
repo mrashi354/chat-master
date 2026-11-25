@@ -363,12 +363,30 @@ async function readPage(rawUrl: string): Promise<string> {
   if (url.username || url.password) throw new Error("URL credentials are not allowed");
   if (isPrivateHost(url.hostname)) throw new Error("Private/local URLs block hain");
 
-  const response = await fetchWithTimeout(url.toString(), { redirect: "follow" }, 11000);
-  if (!response.ok) throw new Error(`Page fetch failed (${response.status})`);
-  const html = (await response.text()).slice(0, 300000);
-  const text = htmlToText(html);
-  if (!text) throw new Error("Page se text nahi mila");
-  return `**${url.hostname}**\n\n${text.slice(0, 7000)}`;
+  let target = url;
+  for (let hop = 0; hop < 4; hop++) {
+    const response = await fetchWithTimeout(target.toString(), { redirect: "manual" }, 11000);
+    const location = response.headers.get("location");
+    if (response.status >= 300 && response.status < 400 && location) {
+      const next = new URL(location, target);
+      if (
+        !/^https?:$/.test(next.protocol) ||
+        next.username ||
+        next.password ||
+        isPrivateHost(next.hostname)
+      ) {
+        throw new Error("Redirect private/local URL par nahi ja sakta");
+      }
+      target = next;
+      continue;
+    }
+    if (!response.ok) throw new Error(`Page fetch failed (${response.status})`);
+    const html = (await response.text()).slice(0, 300000);
+    const text = htmlToText(html);
+    if (!text) throw new Error("Page se text nahi mila");
+    return `**${target.hostname}**\n\n${text.slice(0, 7000)}`;
+  }
+  throw new Error("Bahut zyade redirects");
 }
 
 async function wiki(topic: string): Promise<string> {

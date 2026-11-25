@@ -423,7 +423,7 @@ export default function Toolbox({ open, initialTool = "json", onClose, onInsert 
     link.href = url;
     link.download = `chat-master-${active}.txt`;
     link.click();
-    URL.revokeObjectURL(url);
+    window.setTimeout(() => URL.revokeObjectURL(url), 4000);
   };
 
   if (!open) return null;

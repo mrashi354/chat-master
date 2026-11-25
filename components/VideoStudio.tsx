@@ -406,6 +406,7 @@ export default function VideoStudio({
   const imagesRef = useRef(images);
   const audioUrlRef = useRef(audioUrl);
   const resultUrlRef = useRef(resultUrl);
+  const insertedRef = useRef(false);
   const scenes = useMemo(() => parseScenes(script), [script]);
   const size = SIZES[aspect];
 
@@ -470,7 +471,7 @@ export default function VideoStudio({
         if (!presetUrls.has(item.url)) URL.revokeObjectURL(item.url);
       });
       if (audioUrlRef.current?.startsWith("blob:")) URL.revokeObjectURL(audioUrlRef.current);
-      if (resultUrlRef.current) URL.revokeObjectURL(resultUrlRef.current);
+      if (resultUrlRef.current && !insertedRef.current) URL.revokeObjectURL(resultUrlRef.current);
     };
     // Cleanup only on unmount — refs hold the latest values.
   }, []);
@@ -578,6 +579,7 @@ export default function VideoStudio({
       URL.revokeObjectURL(resultUrl);
       setResultUrl(null);
     }
+    insertedRef.current = false;
 
     const mime = [
       "video/webm;codecs=vp9,opus",
@@ -913,6 +915,7 @@ export default function VideoStudio({
                       type="button"
                       className="studio-btn"
                       onClick={() => {
+                        insertedRef.current = true;
                         onInsert(resultUrl, resultName, script);
                         onClose();
                       }}
