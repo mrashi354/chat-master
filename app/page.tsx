@@ -693,16 +693,22 @@ export default function ChatMaster() {
       return;
     }
 
-    // No photo? Let them open the editor directly.
-    if (
+    // No photo? Edit commands still open the editor — upload karte hi object/caption layer ban jayega.
+    const editWithoutPhoto =
       !options?.base &&
       !regenerate &&
       !attachedImage &&
-      /\b(image|photo|photo-?)\s*(editor|studio|edit)\b|\bedit\s+(an?\s+)?(image|photo)\b/i.test(userText) &&
-      !/\b(banao|banwao|generate|create)\b/i.test(userText)
-    ) {
+      !/^\s*\/(image|video|reel|edit)\b/i.test(userText) &&
+      !/\b(banao|banwao|generate|create|img|tasveer|chitra)\b/i.test(userText) &&
+      (looksLikeImageEditRequest(userText) ||
+        /\b(image|photo|photo-?)\s*(editor|studio|edit)\b|\bedit\s+(an?\s+)?(image|photo)\b/i.test(
+          userText
+        ));
+    if (editWithoutPhoto) {
+      const plan = imageEditPlan(userText);
       setInput("");
-      openImageStudio(null, "");
+      showToast("Photo upload karein — edit apne aap apply ho jayega.", "info");
+      openImageStudio(null, plan.text, plan.objects);
       return;
     }
 
@@ -864,7 +870,7 @@ export default function ChatMaster() {
       (!forceMedia &&
         !wantsVideo &&
         (imageMode || looksLikeImageRequest(userText)) &&
-        !(attachedImage && asksAboutImage(userText)));
+        !asksAboutImage(userText));
 
     // Tool + web search run in parallel so the chat request can start sooner.
     let toolResults: ToolResult[] = [];
