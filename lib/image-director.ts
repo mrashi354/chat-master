@@ -107,6 +107,7 @@ const TRANSLATIONS: Array<[RegExp, string]> = [
   [/\b(muskura|smiling|मुस्कुरा)\b/gi, "smiling"],
   [/\b(ke\s*saath|with|के\s*साथ)\b/gi, "with"],
   [/\b(aur|and|और)\b/gi, "and"],
+  [/\b(?:pm|prime\s+minister)\s+modi\b/gi, "Narendra Modi"],
 ];
 
 const DIRECTOR_SYSTEM =
@@ -215,6 +216,11 @@ async function thinkWithFreeModel(raw: string, parent?: AbortSignal): Promise<st
 function cleanCommand(raw: string): string {
   return raw
     .replace(/^\s*\/(?:image|photo|img)\s*/i, "")
+    .replace(
+      /\b(?:ki|ka|ke)\s+(?:img|image|photo|picture|tasveer|तस्वीर|फोटो)\s+(?:bna|bana|bnao|banao|banwao|banaye|banayi|kdi|kar\s*di|kar\s*do|do)\b/gi,
+      "photograph"
+    )
+    .replace(/\b(?:bna|bnao|kdi|kar\s*di)\b/gi, " ")
     .replace(
       /^\s*(?:please\s+|pls\s+|kindly\s+)?(?:generate|create|make|draw|banao|banwao|banaye|do)\s+(?:an?\s+|the\s+)?(?:new\s+)?(?:image|photo|picture|poster|art|drawing|tasveer|taswir|chitra)?\s*(?:of\s+|about\s+|:|-)?\s*/i,
       ""

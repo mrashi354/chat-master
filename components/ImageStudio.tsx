@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
+import { QUICK_IMAGE_OBJECTS, type QuickImageObject } from "@/lib/chat";
 import {
   ArrowLeftRight,
   Check,
@@ -38,6 +39,7 @@ interface Props {
   open: boolean;
   initialImage?: StudioImage | null;
   initialText?: string;
+  initialObjects?: QuickImageObject[];
   onClose: () => void;
   onInsert?: (url: string, fileName: string, text: string) => void;
   onSendToReel?: (url: string, fileName: string, text: string) => void;
@@ -45,12 +47,14 @@ interface Props {
 
 interface Layer {
   id: string;
-  type: "text" | "sticker" | "rect" | "ellipse" | "arrow" | "stroke";
+  type: "text" | "sticker" | "object" | "rect" | "ellipse" | "arrow" | "stroke";
   x: number;
   y: number;
   w?: number;
   h?: number;
   text?: string;
+  src?: string;
+  label?: string;
   color: string;
   size: number;
   points?: Array<[number, number]>;
@@ -111,6 +115,12 @@ const TOOLS: Array<{ id: Tool; label: string; icon: typeof MousePointer2 }> = [
 ];
 
 const uid = () => `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+const objectImageCache = new Map<string, HTMLImageElement>();
+
+function readyObjectImage(src: string): HTMLImageElement | null {
+  const image = objectImageCache.get(src);
+  return image?.complete && image.naturalWidth > 0 ? image : null;
+}
 
 function filterString(adjustments: Adjustments): string {
   return (
@@ -148,6 +158,15 @@ function drawLayer(ctx: CanvasRenderingContext2D, layer: Layer, selected: boolea
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
     ctx.fillText(layer.text ?? "⭐", layer.x, layer.y);
+  } else if (layer.type === "object") {
+    const image = layer.src ? readyObjectImage(layer.src) : null;
+    if (image) {
+      ctx.save();
+      ctx.shadowBlur = 0;
+      ctx.translate(layer.x, layer.y);
+      ctx.drawImage(image, -layer.size / 2, -layer.size / 2, layer.size, layer.size);
+      ctx.restore();
+    }
   } else if (layer.type === "stroke") {
     const points = layer.points ?? [];
     if (points.length < 2) return ctx.restore();
@@ -233,7 +252,7 @@ function layerBounds(layer: Layer): Rect {
       h: lines.length * layer.size * 1.25,
     };
   }
-  if (layer.type === "sticker") {
+  if (layer.type === "sticker" || layer.type === "object") {
     return { x: layer.x - layer.size / 2, y: layer.y - layer.size / 2, w: layer.size, h: layer.size };
   }
   return { x: Math.min(layer.x, layer.x + (layer.w ?? 0)), y: Math.min(layer.y, layer.y + (layer.h ?? 0)), w: Math.abs(layer.w ?? 0), h: Math.abs(layer.h ?? 0) };
@@ -253,6 +272,7 @@ export default function ImageStudio({
   open,
   initialImage,
   initialText,
+  initialObjects,
   onClose,
   onInsert,
   onSendToReel,
@@ -295,12 +315,73 @@ export default function ImageStudio({
   const cloneOffsetRef = useRef<{ x: number; y: number } | null>(null);
   const [sourceSize, setSourceSize] = useState({ w: 0, h: 0 });
   const [cloneSourceSet, setCloneSourceSet] = useState(false);
+  const objectLoadRef = useRef(new Set<string>());
 
   const bumpSource = () => {
     const canvas = sourceRef.current;
     if (canvas) setSourceSize({ w: canvas.width, h: canvas.height });
     setSourceVersion((value) => value + 1);
   };
+
+  const addObjectLayer = (object: QuickImageObject, automatic = false) => {
+    const source = sourceRef.current;
+    if (!source) return;
+    if (!automatic) {
+      setHistory((prev) => [
+        ...prev.slice(-14),
+        { source: source.toDataURL("image/png"), layers, adjustments },
+      ]);
+      setFuture([]);
+    }
+    const size = Math.max(36, Math.round(Math.min(source.width, source.height) * object.sizeRatio));
+    const layer: Layer =
+      object.kind === "image"
+        ? {
+            id: uid(),
+            type: "object",
+            x: Math.round(source.width * object.x),
+            y: Math.round(source.height * object.y),
+            src: object.src,
+            label: object.label,
+            color: "#ffffff",
+            size,
+          }
+        : {
+            id: uid(),
+            type: "sticker",
+            x: Math.round(source.width * object.x),
+            y: Math.round(source.height * object.y),
+            text: object.emoji ?? "⭐",
+            label: object.label,
+            color: "#ffffff",
+            size,
+          };
+    setLayers((items) => [...items, layer]);
+    setSelectedId(layer.id);
+    setTool("select");
+    if (!automatic) setError("");
+  };
+
+  useEffect(() => {
+    let alive = true;
+    layers.forEach((layer) => {
+      if (layer.type !== "object" || !layer.src) return;
+      if (objectLoadRef.current.has(layer.src)) return;
+      objectLoadRef.current.add(layer.src);
+      const image = new Image();
+      image.onload = () => {
+        objectImageCache.set(layer.src as string, image);
+        if (alive) setSourceVersion((value) => value + 1);
+      };
+      image.onerror = () => {
+        if (alive) setError("Object load nahi ho paya — dobara try karein.");
+      };
+      image.src = layer.src;
+    });
+    return () => {
+      alive = false;
+    };
+  }, [layers]);
 
   useEffect(() => {
     resultRef.current = result;
@@ -346,6 +427,8 @@ export default function ImageStudio({
         setLayers([layer]);
         setSelectedId(layer.id);
       }
+      // "add gun in hand" → drop a real, movable object layer, not a text caption.
+      (initialObjects ?? []).forEach((object) => addObjectLayer(object, true));
     };
     element.onerror = () => {
       if (!cancelled) setError("Image load nahi ho payi — dobara try karein.");
@@ -853,7 +936,11 @@ export default function ImageStudio({
     if (!created) return;
     if (!result) setResult(created);
     insertedRef.current = true;
-    onInsert?.(created.url, created.name, layers.map((layer) => layer.text).filter(Boolean).join(" "));
+    const summary = layers
+      .map((layer) => layer.text || layer.label)
+      .filter(Boolean)
+      .join(" ");
+    onInsert?.(created.url, created.name, summary);
     onClose();
   };
 
@@ -862,7 +949,11 @@ export default function ImageStudio({
     if (!created) return;
     if (!result) setResult(created);
     insertedRef.current = true;
-    onSendToReel?.(created.url, created.name, layers.map((layer) => layer.text).filter(Boolean).join(" "));
+    const summary = layers
+      .map((layer) => layer.text || layer.label)
+      .filter(Boolean)
+      .join(" ");
+    onSendToReel?.(created.url, created.name, summary);
     onClose();
   };
 
@@ -924,12 +1015,34 @@ export default function ImageStudio({
               })}
             </div>
 
+            <div className="editor-panel">
+              <p className="modal-note">
+                🧠 Quick add — click karke object image par rakhein, phir drag karke adjust karein.
+              </p>
+              <div className="studio-row">
+                {QUICK_IMAGE_OBJECTS.slice(0, 6).map((object) => (
+                  <button
+                    key={object.id}
+                    type="button"
+                    className="studio-btn"
+                    onClick={() => addObjectLayer(object)}
+                    aria-label={`Quick add ${object.label}`}
+                  >
+                    + {object.kind === "image" ? "🔫" : object.emoji} {object.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
             {tool === "select" && (
               <div className="editor-panel">
                 <p className="modal-note">Layer par click karke select karein, phir drag karke move. Delete ya Backspace se hataayein.</p>
                 {selectedLayer && (
                   <div className="editor-layer-selected">
-                    <span>Selected: {selectedLayer.type} {selectedLayer.text ? `“${selectedLayer.text.slice(0, 24)}”` : ""}</span>
+                    <span>
+                      Selected: {selectedLayer.label ?? selectedLayer.type}{" "}
+                      {selectedLayer.text ? `“${selectedLayer.text.slice(0, 24)}”` : ""}
+                    </span>
                     <button type="button" className="studio-btn" onClick={deleteSelected}><Trash2 size={13} /> Hataayein</button>
                   </div>
                 )}

@@ -296,9 +296,13 @@ export function toApiMessages(messages: Message[]) {
 
 const VIDEO_WORDS = ["video", "vedio", "clip", "animation", "animated", "वीडियो", "विडियो"];
 const IMAGE_WORDS = [
-  "image", "photo", "picture", "draw", "drawing", "poster", "art",
-  "banwao", "banao", "tasveer", "taswir", "chitra", "चित्र", "तस्वीर", "फोटो", "इमेज",
+  "image", "photo", "picture", "poster", "wallpaper", "draw", "drawing", "art",
+  "img", "dp", "bna", "bnao", "bana", "banao", "banwao", "banaye", "banayi", "kdi",
+  "tasveer", "taswir", "chitra", "चित्र", "तस्वीर", "फोटो", "इमेज", "चित्र",
+  "تصویر", "عکس",
 ];
+const IMAGE_CREATION_PATTERN =
+  /(?:\b(?:generate|create|make|draw|banao|banwao|banaye|bana|bna|bnao)\b.{0,60}\b(?:image|photo|picture|poster|img|wallpaper|tasveer|taswir|chitra|चित्र|तस्वीर|फोटो|इमेज)\b)|(?:\b(?:image|photo|picture|poster|img|wallpaper|tasveer|taswir|chitra|चित्र|तस्वीर|फोटो|इमेज)\b.{0,60}\b(?:banao|banwao|banaye|bana|bna|bnao|kdi|kar\s*do|do)\b)/i;
 
 export function looksLikeVideoRequest(text: string): boolean {
   const lower = text.toLowerCase();
@@ -308,10 +312,11 @@ export function looksLikeVideoRequest(text: string): boolean {
 }
 
 export function looksLikeImageRequest(text: string): boolean {
-  const lower = text.toLowerCase();
+  const lower = text.toLowerCase().replace(/\s+/g, " ");
   // "image ke liye code likho" should stay a coding request.
   if (/\b(code|program|script|function|api|html|css)\b/.test(lower)) return false;
-  return IMAGE_WORDS.some((word) => lower.includes(word));
+  if (IMAGE_WORDS.some((word) => lower.includes(word))) return true;
+  return IMAGE_CREATION_PATTERN.test(lower);
 }
 
 const EDIT_WORDS =
@@ -342,6 +347,63 @@ export function scriptFromImageRequest(text: string): string {
     return "Apni kahani yahin se shuru hoti hai ✨";
   }
   return cleaned.slice(0, 300);
+}
+
+export interface QuickImageObject {
+  id: string;
+  label: string;
+  kind: "image" | "sticker";
+  src?: string;
+  emoji?: string;
+  /** Normalised canvas position (0–1). */
+  x: number;
+  y: number;
+  /** Fraction of the image's shorter side. */
+  sizeRatio: number;
+}
+
+/** Objects the editor can drop onto a photo straight from a Hinglish command. */
+export const QUICK_IMAGE_OBJECTS: QuickImageObject[] = [
+  { id: "gun", label: "Gun", kind: "image", src: "/objects/pistol.svg", x: 0.72, y: 0.58, sizeRatio: 0.34 },
+  { id: "crown", label: "Crown", kind: "sticker", emoji: "👑", x: 0.5, y: 0.2, sizeRatio: 0.18 },
+  { id: "flower", label: "Flower", kind: "sticker", emoji: "🌸", x: 0.76, y: 0.67, sizeRatio: 0.16 },
+  { id: "glasses", label: "Sunglasses", kind: "sticker", emoji: "🕶️", x: 0.5, y: 0.37, sizeRatio: 0.2 },
+  { id: "hat", label: "Hat", kind: "sticker", emoji: "🎩", x: 0.5, y: 0.2, sizeRatio: 0.2 },
+  { id: "heart", label: "Heart", kind: "sticker", emoji: "❤️", x: 0.78, y: 0.3, sizeRatio: 0.14 },
+  { id: "fire", label: "Fire", kind: "sticker", emoji: "🔥", x: 0.25, y: 0.68, sizeRatio: 0.16 },
+  { id: "star", label: "Sparkle", kind: "sticker", emoji: "✨", x: 0.24, y: 0.26, sizeRatio: 0.14 },
+];
+
+const OBJECT_PATTERNS: Array<{ id: string; patterns: RegExp[] }> = [
+  { id: "gun", patterns: [/\bguns?\b/i, /\bpistols?\b/i, /\brevolvers?\b/i, /बंदूक|गन/i, /bandook/i] },
+  { id: "crown", patterns: [/\bcrowns?\b/i, /ताज/i, /taaj/i] },
+  { id: "flower", patterns: [/\bflowers?\b/i, /फूल/i, /phool/i] },
+  { id: "glasses", patterns: [/\b(?:sun)?glasses\b/i, /चश्मे|चश्मा/i, /chashme/i] },
+  { id: "hat", patterns: [/\b(?:hat|cap|topi)\b/i, /टोपी/i] },
+  { id: "heart", patterns: [/\bhearts?\b/i, /दिल/i, /dil/i] },
+  { id: "fire", patterns: [/\bfire\b/i, /आग/i, /aag/i] },
+  { id: "star", patterns: [/\b(?:star|sparkle|glitter)\b/i, /सितार/i, /chamak/i] },
+];
+
+/** Detect things like "add gun in hand" / "iska haat ma gun add kro". */
+export function imageEditObjectsFromText(text: string): QuickImageObject[] {
+  if (/\b(?:remove|delete|hatao|hata|hatana|hatayein|mitao|मिटा|हटा)\b/i.test(text)) return [];
+  const found = OBJECT_PATTERNS.filter((item) => item.patterns.some((pattern) => pattern.test(text)))
+    .map((item) => QUICK_IMAGE_OBJECTS.find((object) => object.id === item.id))
+    .filter((object): object is QuickImageObject => Boolean(object));
+
+  return found.map((object) => {
+    if (object.id === "gun" && /\b(?:hand|hath|haat)\b|हाथ/i.test(text)) {
+      return { ...object, x: 0.72, y: 0.58 };
+    }
+    return object;
+  });
+}
+
+/** Object edits should not also dump the raw command onto the photo as text. */
+export function imageEditPlan(text: string): { objects: QuickImageObject[]; text: string } {
+  const objects = imageEditObjectsFromText(text);
+  return { objects, text: objects.length ? "" : scriptFromImageRequest(text) };
 }
 
 export function revokeMessageMediaItem(message: Message): void {

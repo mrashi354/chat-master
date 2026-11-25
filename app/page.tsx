@@ -42,7 +42,8 @@ import {
   looksLikeImageRequest,
   looksLikeSearch,
   mediaPromptFromText,
-  scriptFromImageRequest,
+  imageEditPlan,
+  type QuickImageObject,
   mediaStatusText,
   looksLikeVideoRequest,
   makeMessage,
@@ -186,6 +187,7 @@ export default function ChatMaster() {
   const [imageStudioOpen, setImageStudioOpen] = useState(false);
   const [imageStudioImage, setImageStudioImage] = useState<{ name: string; url: string } | null>(null);
   const [imageStudioText, setImageStudioText] = useState("");
+  const [imageStudioObjects, setImageStudioObjects] = useState<QuickImageObject[]>([]);
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [showTools, setShowTools] = useState(false);
   const [uploading, setUploading] = useState(false);
@@ -539,9 +541,14 @@ export default function ChatMaster() {
     setStudioOpen(true);
   };
 
-  const openImageStudio = (image: { name: string; url: string } | null, text = "") => {
+  const openImageStudio = (
+    image: { name: string; url: string } | null,
+    text = "",
+    objects: QuickImageObject[] = []
+  ) => {
     setImageStudioImage(image);
     setImageStudioText(text);
+    setImageStudioObjects(objects);
     setImageStudioOpen(true);
   };
 
@@ -578,7 +585,7 @@ export default function ChatMaster() {
     }
     const label = text.trim() || "Edited image";
     const userMessage = makeMessage("user", `🖼️ Photo me script: ${titleFromMessage(label)}`);
-    const assistant = makeMessage("assistant", "✅ Script photo par add kar di gayi. Download ya edit karne ke liye Image Studio kholein.", {
+    const assistant = makeMessage("assistant", "✅ Photo edit ho gayi. Download ya edit karne ke liye Image Studio kholein.", {
       media: { type: "image", url, prompt: label, fileName },
     });
     setChats((prev) =>
@@ -675,9 +682,11 @@ export default function ChatMaster() {
       );
       setInput("");
       setAttachments([]);
+      const plan = imageEditPlan(userText);
       openImageStudio(
         { name: attachedImage.name, url: attachedImage.url },
-        scriptFromImageRequest(userText)
+        plan.text,
+        plan.objects
       );
       return;
     }
@@ -731,9 +740,12 @@ export default function ChatMaster() {
       }
       if (name === "/edit") {
         const firstImage = pendingFiles.find((file) => file.type.startsWith("image/") && file.url);
+        const editText = userText.slice(name.length).trim();
+        const plan = imageEditPlan(editText);
         openImageStudio(
           firstImage?.url ? { name: firstImage.name, url: firstImage.url } : null,
-          userText.slice(name.length).trim()
+          plan.text,
+          plan.objects
         );
         setInput("");
         setAttachments([]);
@@ -1702,10 +1714,11 @@ export default function ChatMaster() {
       />
 
       <ImageStudio
-        key={`${imageStudioOpen}-${imageStudioImage?.url ?? "none"}`}
+        key={`${imageStudioOpen}-${imageStudioImage?.url ?? "none"}-${imageStudioObjects.map((item) => item.id).join(",")}`}
         open={imageStudioOpen}
         initialImage={imageStudioImage}
         initialText={imageStudioText}
+        initialObjects={imageStudioObjects}
         onClose={() => setImageStudioOpen(false)}
         onInsert={insertEditedImage}
         onSendToReel={sendEditedToReel}
