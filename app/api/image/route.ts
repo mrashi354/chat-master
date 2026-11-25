@@ -225,43 +225,47 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    let result: GeneratedImage;
-    let provider: string;
+    let winner: { bytes: GeneratedImage; provider: string } | null = null;
 
     // Race three free providers with separate quotas. Winner wins; the slower
     // requests are aborted so a busy service never holds the response back.
-    const race = new AbortController();
-    const forwardAbort = () => race.abort();
-    req.signal.addEventListener("abort", forwardAbort, { once: true });
-    try {
-      const horde = generateWithHorde(
-        plan.prompt,
-        plan.negativePrompt,
-        plan.width,
-        plan.height,
-        race.signal
-      ).then((bytes) => ({ bytes, provider: "horde" }));
-      const genPollinations = delayedStart(
-        () => generateWithGenPollinations(plan.prompt, plan.width, plan.height, race.signal),
-        1500,
-        race.signal
-      ).then((bytes) => ({ bytes, provider: "gen-pollinations" }));
-      const pollinations = delayedStart(
-        () => generateWithPollinations(plan.prompt, plan.width, plan.height, race.signal),
-        6000,
-        race.signal
-      ).then((bytes) => ({ bytes, provider: "pollinations" }));
+    // If all three are temporarily busy, wait briefly and race them once more.
+    for (let attempt = 0; attempt < 2 && !winner; attempt++) {
+      const race = new AbortController();
+      const forwardAbort = () => race.abort();
+      req.signal.addEventListener("abort", forwardAbort, { once: true });
+      try {
+        const horde = generateWithHorde(
+          plan.prompt,
+          plan.negativePrompt,
+          plan.width,
+          plan.height,
+          race.signal
+        ).then((bytes) => ({ bytes, provider: "horde" }));
+        const genPollinations = delayedStart(
+          () => generateWithGenPollinations(plan.prompt, plan.width, plan.height, race.signal),
+          1500,
+          race.signal
+        ).then((bytes) => ({ bytes, provider: "gen-pollinations" }));
+        const pollinations = delayedStart(
+          () => generateWithPollinations(plan.prompt, plan.width, plan.height, race.signal),
+          6000,
+          race.signal
+        ).then((bytes) => ({ bytes, provider: "pollinations" }));
 
-      const winner = await Promise.any([horde, genPollinations, pollinations]);
-      race.abort();
-      result = winner.bytes;
-      provider = winner.provider;
-    } catch {
-      if (req.signal.aborted) throw new DOMException("Aborted", "AbortError");
-      throw new Error("Dono free image services busy hain — thodi der baad try karein.");
-    } finally {
-      req.signal.removeEventListener("abort", forwardAbort);
+        winner = await Promise.any([horde, genPollinations, pollinations]);
+      } catch {
+        if (req.signal.aborted) throw new DOMException("Aborted", "AbortError");
+        if (attempt === 0) await wait(2500, req.signal);
+        else throw new Error("Teenon free image services busy hain — thodi der baad try karein.");
+      } finally {
+        race.abort();
+        req.signal.removeEventListener("abort", forwardAbort);
+      }
     }
+    if (!winner) throw new Error("Teenon free image services busy hain — thodi der baad try karein.");
+    const result = winner.bytes;
+    const provider = winner.provider;
 
     return new NextResponse(result.bytes, {
       headers: {

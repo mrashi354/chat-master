@@ -77,6 +77,10 @@ const STYLE_RULES: StyleRule[] = [
 
 // Hinglish/Hindi words that image models understand far better in English.
 const TRANSLATIONS: Array<[RegExp, string]> = [
+  [/\b(scripeo|scripteo|scripe|scrpio|scripyo|स्क्रिप्ट)\b/gi, "script"],
+  [/\bscript\s+([a-z]+)\s+(?:image|photo|picture|poster|img)\b/gi, "$1 poster with elegant handwritten script text"],
+  [/\bscript\s+(?:image|photo|picture|poster|img)\b/gi, "poster with elegant handwritten script text"],
+  [/\b(img|tasveer|तस्वीर|फोटो)\b/gi, "image"],
   [/\b(ladki|larki|girl|बच्ची|लड़की)\b/gi, "young woman"],
   [/\b(ladka|larka|बच्चा|लड़का)\b/gi, "young man"],
   [/\b(aurat|mahila|woman|स्त्री|महिला|औरत)\b/gi, "woman"],
@@ -108,6 +112,7 @@ const TRANSLATIONS: Array<[RegExp, string]> = [
   [/\b(ke\s*saath|with|के\s*साथ)\b/gi, "with"],
   [/\b(aur|and|और)\b/gi, "and"],
   [/\b(?:pm|prime\s+minister)\s+modi\b/gi, "Narendra Modi"],
+  [/\bpm\b/gi, "Prime Minister"],
 ];
 
 const DIRECTOR_SYSTEM =
@@ -216,16 +221,24 @@ async function thinkWithFreeModel(raw: string, parent?: AbortSignal): Promise<st
 function cleanCommand(raw: string): string {
   return raw
     .replace(/^\s*\/(?:image|photo|img)\s*/i, "")
+    .replace(/\b(?:muja|mujhe|muje)\b/gi, " ")
+    .replace(/\b(?:scripeo|scripteo|scripe|scrpio|scripyo)\b/gi, "script")
+    .replace(
+      /\b([a-z]+(?:\s+[a-z]+)?)\s+ki\s+(?:img|image|photo|picture|tasveer|तस्वीर|फोटो)\b/gi,
+      "photograph of $1"
+    )
     .replace(
       /\b(?:ki|ka|ke)\s+(?:img|image|photo|picture|tasveer|तस्वीर|फोटो)\s+(?:bna|bana|bnao|banao|banwao|banaye|banayi|kdi|kar\s*di|kar\s*do|do)\b/gi,
       "photograph"
     )
-    .replace(/\b(?:bna|bnao|kdi|kar\s*di)\b/gi, " ")
+    .replace(/\b(?:bna|bana|bnao|banao|banwao|banaye|banayi|banake|banakar)\s+(?:k|kar)?\s*do\b/gi, " ")
+    .replace(/\b(?:kar\s*do|k\s*do|kdi|kar\s*di|banke)\b/gi, " ")
+    .replace(/\b(?:bna|bnao|bana|banao|banwao|banaye|banayi)\b/gi, " ")
     .replace(
       /^\s*(?:please\s+|pls\s+|kindly\s+)?(?:generate|create|make|draw|banao|banwao|banaye|do)\s+(?:an?\s+|the\s+)?(?:new\s+)?(?:image|photo|picture|poster|art|drawing|tasveer|taswir|chitra)?\s*(?:of\s+|about\s+|:|-)?\s*/i,
       ""
     )
-    .replace(/^(?:ek|a|an)\s+/i, "")
+    .replace(/^\s*(?:ek|ak|a|an)\s+/i, "")
     .replace(/\s+/g, " ")
     .trim();
 }
@@ -356,7 +369,7 @@ export async function planImage(
     options.width ?? 768,
     options.height ?? 768
   );
-  const textRequested = /\b(text|word|words|caption|title|heading|poster|typography|write|likh|लिख|अक्षर|शीर्षक)\b/i.test(
+  const textRequested = /\b(text|word|words|caption|title|heading|poster|typography|write|script|likh|लिख|अक्षर|शीर्षक)\b/i.test(
     translated
   );
 
