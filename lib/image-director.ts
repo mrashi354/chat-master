@@ -78,9 +78,10 @@ const STYLE_RULES: StyleRule[] = [
 // Hinglish/Hindi words that image models understand far better in English.
 const TRANSLATIONS: Array<[RegExp, string]> = [
   [/\b(scripeo|scripteo|scripe|scrpio|scripyo|स्क्रिप्ट)\b/gi, "script"],
-  [/\bscript\s+([a-z]+)\s+(?:image|photo|picture|poster|img)\b/gi, "$1 poster with elegant handwritten script text"],
-  [/\bscript\s+(?:image|photo|picture|poster|img)\b/gi, "poster with elegant handwritten script text"],
-  [/\b(img|tasveer|तस्वीर|फोटो)\b/gi, "image"],
+  [/\bscript\s+([a-z]+)\s+(?:image|photo|picture|poster|img|pic|pics)\b/gi, "$1 poster with elegant handwritten script text"],
+  [/\b([a-z]+)\s+script\s+image\b/gi, "elegant $1 handwritten calligraphy script text"],
+  [/\bscript\s+(?:image|photo|picture|poster|img|pic|pics)\b/gi, "poster with elegant handwritten script text"],
+  [/\b(img|pic|pics|tasveer|तस्वीर|फोटो)\b/gi, "image"],
   [/\b(ladki|larki|girl|बच्ची|लड़की)\b/gi, "young woman"],
   [/\b(ladka|larka|बच्चा|लड़का)\b/gi, "young man"],
   [/\b(aurat|mahila|woman|स्त्री|महिला|औरत)\b/gi, "woman"],
@@ -144,6 +145,8 @@ function cleanThought(text: string): string | null {
     .replace(/^\s*(?:prompt|image\s*prompt|final\s*prompt)\s*[:\-]?\s*/i, "")
     .replace(/^\s*["'`]+|["'`]+\s*$/g, "")
     .replace(/[_*#>+-]+/g, " ")
+    .replace(/\s*,\s*[.,]+\s*/g, ", ")
+    .replace(/[\s,.;:]+$/g, "")
     .replace(/\s+/g, " ")
     .trim()
     .slice(0, 600);
@@ -223,12 +226,21 @@ function cleanCommand(raw: string): string {
     .replace(/^\s*\/(?:image|photo|img)\s*/i, "")
     .replace(/\b(?:muja|mujhe|muje)\b/gi, " ")
     .replace(/\b(?:scripeo|scripteo|scripe|scrpio|scripyo)\b/gi, "script")
+    // "black scripeo ki pic" → "black script image" before the generic photo rule.
     .replace(
-      /\b([a-z]+(?:\s+[a-z]+)?)\s+ki\s+(?:img|image|photo|picture|tasveer|तस्वीर|फोटो)\b/gi,
+      /\b([a-z]+(?:\s+[a-z]+)?)\s+script\s+ki\s+(?:pics?|picture|photo|image|img|tasveer|तस्वीर|फोटो)\b/gi,
+      "$1 script image"
+    )
+    .replace(
+      /\bscript\s+ki\s+(?:pics?|picture|photo|image|img|tasveer|तस्वीर|फोटो)\b/gi,
+      "script image"
+    )
+    .replace(
+      /\b([a-z]+(?:\s+[a-z]+)?)\s+ki\s+(?:pics?|picture|photo|image|img|tasveer|तस्वीर|फोटो)\b/gi,
       "photograph of $1"
     )
     .replace(
-      /\b(?:ki|ka|ke)\s+(?:img|image|photo|picture|tasveer|तस्वीर|फोटो)\s+(?:bna|bana|bnao|banao|banwao|banaye|banayi|kdi|kar\s*di|kar\s*do|do)\b/gi,
+      /\b(?:ki|ka|ke)\s+(?:pics?|picture|photo|image|img|tasveer|तस्वीर|फोटो)\s+(?:bna|bana|bnao|banao|banwao|banaye|banayi|kdi|kar\s*di|kar\s*do|do)\b/gi,
       "photograph"
     )
     .replace(/\b(?:bna|bana|bnao|banao|banwao|banaye|banayi|banake|banakar)\s+(?:k|kar)?\s*do\b/gi, " ")
@@ -295,6 +307,23 @@ function validateThought(thought: string, translated: string): boolean {
     );
   });
   return matched.length > 0;
+}
+
+/** Terms from the local prompt that the LLM thought dropped — append only these, not the full phrase. */
+function missingThoughtTerms(thought: string, translated: string): string[] {
+  const thoughtLower = ` ${thought.toLowerCase()} `;
+  const terms = [...new Set(
+    translated
+      .toLowerCase()
+      .split(/[^a-z]+/)
+      .filter((word) => word.length >= 3 && !THOUGHT_STOP_WORDS.has(word))
+  )];
+  return terms.filter((term) => {
+    const candidates = THOUGHT_SYNONYMS[term] ?? [term];
+    return !candidates.some((candidate) =>
+      new RegExp(`(?:^|[^a-z])${candidate}(?:s|es)?(?:[^a-z]|$)`).test(thoughtLower)
+    );
+  });
 }
 
 function detectStyles(text: string): StyleRule[] {
@@ -387,12 +416,14 @@ export async function planImage(
 
   let core = thought ?? translated;
   if (thought) {
-    // Keep Hinglish keywords as a backup cue for the image model.
-    core = `${thought}, ${translated}`.slice(0, 700);
+    // Append only missing key terms — the full translated phrase would duplicate the thought.
+    const backup = missingThoughtTerms(thought, translated);
+    core = (backup.length ? `${thought}, ${backup.join(" ")}` : thought).slice(0, 700);
   }
   core = core
     .replace(/\b\d+\s*:\s*\d+\b/gi, "")
     .replace(/\b(?:vertical|horizontal|wide|square)?\s*aspect\s*ratio\b/gi, "")
+    .replace(/\s*,\s*[.,]+\s*/g, ", ")
     .replace(/\s*,\s*,/g, ", ")
     .replace(/\s+/g, " ")
     .trim();

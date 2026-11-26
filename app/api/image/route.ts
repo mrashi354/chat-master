@@ -230,7 +230,7 @@ export async function POST(req: NextRequest) {
     // Race three free providers with separate quotas. Winner wins; the slower
     // requests are aborted so a busy service never holds the response back.
     // If all three are temporarily busy, wait briefly and race them once more.
-    for (let attempt = 0; attempt < 2 && !winner; attempt++) {
+    for (let attempt = 0; attempt < 3 && !winner; attempt++) {
       const race = new AbortController();
       const forwardAbort = () => race.abort();
       req.signal.addEventListener("abort", forwardAbort, { once: true });
@@ -256,7 +256,7 @@ export async function POST(req: NextRequest) {
         winner = await Promise.any([horde, genPollinations, pollinations]);
       } catch {
         if (req.signal.aborted) throw new DOMException("Aborted", "AbortError");
-        if (attempt === 0) await wait(2500, req.signal);
+        if (attempt < 2) await wait(attempt === 0 ? 2500 : 4000, req.signal);
         else throw new Error("Teenon free image services busy hain — thodi der baad try karein.");
       } finally {
         race.abort();
